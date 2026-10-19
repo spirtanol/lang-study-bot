@@ -1,0 +1,107 @@
+x-backend-common: &backend_common
+  build:
+    context: .
+    dockerfile: Dockerfile.dev
+  image: assistant-dev:${APP_VERSION:-latest}
+  working_dir: /app
+  volumes:
+    - .:/app
+  env_file:
+    - .env
+  user: "${UID}:${GID}"
+  environment:
+    USER: "${UID}"
+    LOGNAME: "${UID}"
+  restart: on-failure
+
+services:
+  web:
+    <<: *backend_common
+    command: ["poetry", "run", "python", "-m", "app.web", "0.0.0.0", "8000"]
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${HOST:-127.0.0.1}:${PORT:-8000}:8000"
+
+  scheduler:
+    <<: *backend_common
+    command: ["poetry", "run", "python", "-m", "app.scheduler"]
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      worker:
+        condition: service_started
+      telegram-worker:
+        condition: service_started
+
+  worker:
+    <<: *backend_common
+    command: ["poetry", "run", "taskiq", "worker", "app.worker:worker_common_broker", "app.events.tasks", "-w", "${EVENT_WORKER_COUNT:-1}"]
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  telegram-worker:
+    <<: *backend_common
+    command: ["poetry", "run", "taskiq", "worker", "app.worker:worker_telegram_broker", "app.events.tasks", "-w", "${TELEGRAM_WORKER_COUNT:-1}"]
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    restart: unless-stopped
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  db:
+    image: postgres:17-alpine
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      TZ: UTC
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama:${APP_VERSION:-latest}
+    volumes:
+      - ollama-data:/root/.ollama
+    ports:
+      - "127.0.0.1:${OLLAMA_PORT:-11434}:11434"
+    restart: unless-stopped
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_NUM_PARALLEL: "1"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  ollama-data:
+  rabbitmq-data:
