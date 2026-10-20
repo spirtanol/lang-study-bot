@@ -44,3 +44,8 @@ class StudyAttemptStatus(StrEnum):
 class FamiliarityLevel(IntEnum):
     BAD = 10
     GOOD = 30
+
+
+class MessageDirect(StrEnum):
+    IN = "in"
+    OUT = "out"

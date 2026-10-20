@@ -1,19 +1,15 @@
 import asyncio
-import logging
 import signal
 
 from app.core.container import get_context_container
 from app.core.disposer import dispose
+from app.core.logging import init_logging
 
 TICK_SECONDS = 1
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s %(name)s: %(message)s",
-)
-
 
 def main() -> None:
+    init_logging()
     asyncio.run(_run())
 
 
@@ -26,7 +22,7 @@ async def _run() -> None:
     async with get_context_container() as container:
         try:
             while not stop.is_set():
-                await container.scheduler_service.dispatch_due()
+                await container.scheduler_service.run()
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=TICK_SECONDS)
                 except TimeoutError:

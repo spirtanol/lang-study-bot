@@ -13,6 +13,7 @@ from .exceptions import (
     LLMTimeoutError,
     LLMUnavailableError,
     is_rate_limited,
+    is_unavailable,
 )
 from .messages import to_langchain_messages
 from .types import LLMMessage
@@ -57,6 +58,8 @@ class OllamaProvider:
                 raise LLMRateLimitError(str(error)) from error
             raise LLMUnavailableError(str(error)) from error
         except (OutputParserException, ValidationError, ResponseError) as error:
+            if is_unavailable(error):
+                raise LLMUnavailableError(str(error)) from error
             raise LLMResponseError(str(error)) from error
 
         if not isinstance(result, response_model):

@@ -5,7 +5,7 @@ from typing import Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from app.llm import LLMError
+from app.llm import LLMError, LLMUnavailableError
 
 
 class WordChecks(Protocol):
@@ -125,6 +125,8 @@ def _translation(language_model: WordChecks):
     async def node(state: AddWordState) -> dict[str, bool | str | list[str]]:
         try:
             translations = await language_model.suggest_translations(state["word"])
+        except LLMUnavailableError:
+            raise
         except LLMError:
             return {
                 "accept": False,

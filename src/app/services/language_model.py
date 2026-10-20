@@ -1,9 +1,11 @@
 import asyncio
+import logging
 import random
 import re
 from collections.abc import Sequence
 from datetime import time
 from functools import lru_cache
+from time import perf_counter
 from typing import TypeVar
 from zoneinfo import available_timezones
 
@@ -15,6 +17,7 @@ from app.llm import (
     LLMProvider,
     LLMRateLimitError,
     LLMResponseError,
+    LLMUnavailableError,
 )
 from app.schemas.llm import TranslationVerdict, VerdictReview
 
@@ -43,7 +46,8 @@ VERDICT_REVIEW_SYSTEM_PROMPT = (
     "Set verdict_holds to true only if that verdict correctly judges the answer. "
     "A remark such as «верно» or «правильно» is not a translation. "
     "A verdict that accepts it does not hold. "
-    "When the verdict does not hold, write brief remarks in Russian. "
+    "When the verdict does not hold, write brief remarks in Russian "
+    "and always list the correct translations. "
     "When it holds, leave remarks empty."
 )
 SUGGEST_TRANSLATIONS_SYSTEM_PROMPT = (
@@ -79,6 +83,8 @@ RESOLVE_TIMEZONE_SYSTEM_PROMPT = (
     "Do not invent a name. Return only the structured field."
 )
 _CLOCK_TIME = re.compile(r"^(\d{1,2}):(\d{2})$")
+
+logger = logging.getLogger("app.llm")
 
 
 class WordUsage(BaseModel):
@@ -127,15 +133,33 @@ class LanguageModelService:
     ) -> ResponseT:
         attempt = 0
         while True:
+            started = perf_counter()
+            logger.info(
+                "Запрос %s %s",
+                response_model.__name__,
+                [
+                    {"role": message.role, "content": message.content}
+                    for message in messages
+                ],
+            )
             try:
-                return await self._llm.generate_structured(messages, response_model)
+                result = await self._llm.generate_structured(messages, response_model)
             except LLMRateLimitError:
                 if attempt == self._rate_limit_retries:
+                    logger.exception("Исчерпан лимит запросов к модели")
                     raise
                 attempt += 1
+                logger.warning("Лимит модели, повтор %s", attempt)
                 await asyncio.sleep(
                     random.uniform(1, self._rate_limit_max_delay_seconds)
                 )
+                continue
+            except Exception:
+                logger.exception("Ошибка модели")
+                raise
+            elapsed_ms = int((perf_counter() - started) * 1000)
+            logger.info("Ответ %s мс %s", elapsed_ms, result.model_dump())
+            return result
 
     async def build_question_text(self, word: str) -> str:
         try:
@@ -146,6 +170,8 @@ class LanguageModelService:
                 ),
                 WordUsage,
             )
+        except LLMUnavailableError:
+            raise
         except LLMError:
             return ASK_TRANSLATION_TEXT
 

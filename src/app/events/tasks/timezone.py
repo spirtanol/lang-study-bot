@@ -7,7 +7,11 @@ from app.events.tasks.telegram import emit_telegram
 from app.services.exceptions import UserVersionError
 from app.telegram import TelegramMessage
 from app.telegram.reply import CANCEL_MARKUP
-from app.telegram.texts import TIMEZONE_PARSE_FAILED_TEXT, TIMEZONE_PROMPT
+from app.telegram.texts import (
+    MODEL_UNAVAILABLE_TEXT,
+    TIMEZONE_PARSE_FAILED_TEXT,
+    TIMEZONE_PROMPT,
+)
 
 
 async def _handle(
@@ -26,7 +30,11 @@ async def _handle(
     except UserVersionError:
         return
     reply_markup = None
-    if reply.text in {TIMEZONE_PROMPT, TIMEZONE_PARSE_FAILED_TEXT}:
+    if reply.text in {
+        TIMEZONE_PROMPT,
+        TIMEZONE_PARSE_FAILED_TEXT,
+        MODEL_UNAVAILABLE_TEXT,
+    }:
         reply_markup = CANCEL_MARKUP
     await container.event_service.publish(
         emit_telegram(

@@ -3,6 +3,7 @@ from enum import StrEnum
 
 class TelegramCommand(StrEnum):
     START = "start"
+    CONTACTS = "contacts"
     SCHEDULE = "schedule"
     SETUP_SCHEDULE = "setup_schedule"
     CLEAR_SCHEDULE = "clear_schedule"
@@ -16,6 +17,7 @@ class TelegramCommand(StrEnum):
 
 TELEGRAM_COMMAND_DESCRIPTIONS: dict[TelegramCommand, str] = {
     TelegramCommand.START: "Начать",
+    TelegramCommand.CONTACTS: "Контакты",
     TelegramCommand.SCHEDULE: "Показать расписание",
     TelegramCommand.SETUP_SCHEDULE: "Настроить расписание",
     TelegramCommand.CLEAR_SCHEDULE: "Очистить расписание",

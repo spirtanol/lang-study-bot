@@ -1,3 +1,4 @@
+from .chat_message import ChatMessageRepository
 from .exceptions import (
     ActiveStudySessionAlreadyExistsError,
     StudyAttemptAlreadyExistsError,
@@ -19,6 +20,7 @@ from .word import WordRepository
 __all__ = (
     "ActiveStudySessionAlreadyExistsError",
     "AttemptCounts",
+    "ChatMessageRepository",
     "PickedItem",
     "PendingQuestion",
     "StudyAttemptAlreadyExistsError",

@@ -1,3 +1,4 @@
+from .chat_message import ChatMessageService
 from .events import EventService
 from .exceptions import (
     ActiveStudySessionNotFoundError,
@@ -25,6 +26,7 @@ from .word import WordService
 __all__ = (
     "ActiveStudySessionNotFoundError",
     "AskTranslation",
+    "ChatMessageService",
     "EventService",
     "LanguageModelService",
     "ReplyOutcome",

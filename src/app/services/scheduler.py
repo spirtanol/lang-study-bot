@@ -3,6 +3,7 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta, timezone
 
+from app.core.logging import user_telegram_id as log_user_id
 from app.repositories import UserRepository
 
 from .events import EventService
@@ -22,6 +23,24 @@ class SchedulerService:
         self._events = events
         self._transaction = transaction
         self._lease = lease
+        self._next_chat_cleanup: datetime | None = None
+
+    async def run(self) -> None:
+        await self.dispatch_due()
+        await self._publish_chat_cleanup()
+
+    async def _publish_chat_cleanup(self) -> None:
+        from app.events.tasks import emit_delete_old_chat_messages
+
+        now = datetime.now(timezone.utc)
+        if self._next_chat_cleanup is not None and now < self._next_chat_cleanup:
+            return
+        try:
+            await self._events.publish(emit_delete_old_chat_messages())
+        except Exception:
+            logger.exception("Не удалось опубликовать очистку старых сообщений")
+            return
+        self._next_chat_cleanup = now + timedelta(hours=1)
 
     async def dispatch_due(self) -> None:
         from app.events.tasks import emit_schedule
@@ -33,6 +52,7 @@ class SchedulerService:
             return
 
         for user_telegram_id, version in due:
+            token = log_user_id.set(user_telegram_id)
             try:
                 await self._events.publish(emit_schedule(user_telegram_id, version))
             except Exception:
@@ -40,6 +60,8 @@ class SchedulerService:
                     "Не удалось опубликовать событие расписания для пользователя %s",
                     user_telegram_id,
                 )
+            finally:
+                log_user_id.reset(token)
 
     async def _claim_due(self) -> list[tuple[int, int]]:
         now = datetime.now(timezone.utc)

@@ -4,7 +4,7 @@ from contextlib import AbstractAsyncContextManager
 from typing import assert_never
 
 from app.defs import StartSessionResult, StudySessionStatus, UserIntent
-from app.llm import LLMError
+from app.llm import LLMError, LLMUnavailableError
 from app.models import StudyScheduleSlot, User, Word
 from app.repositories import (
     PendingQuestion,
@@ -26,6 +26,8 @@ from app.telegram.texts import (
     ALREADY_IN_PROGRESS_TEXT,
     CANCELLED_TEXT,
     CHECK_FAILED_TEXT,
+    CONTACTS_TEXT,
+    MODEL_UNAVAILABLE_TEXT,
     NO_SCHEDULE_TEXT,
     NO_STUDY_WORDS_TEXT,
     NO_WORDS_TEXT,
@@ -86,6 +88,8 @@ class UserReplyService:
         schedule: StudyScheduleService,
         vocabulary: VocabularyService,
         transaction: Callable[[], AbstractAsyncContextManager[None]],
+        contact_telegram_username: str,
+        contact_email: str,
     ):
         self._sessions = sessions
         self._attempts = attempts
@@ -96,6 +100,8 @@ class UserReplyService:
         self._schedule = schedule
         self._vocabulary = vocabulary
         self._transaction = transaction
+        self._contact_telegram_username = contact_telegram_username
+        self._contact_email = contact_email
 
     async def handle_command(
         self,
@@ -105,6 +111,13 @@ class UserReplyService:
     ) -> TelegramMessage | None:
         if command == TelegramCommand.START:
             return WELCOME
+        if command == TelegramCommand.CONTACTS:
+            return TelegramMessage(
+                text=CONTACTS_TEXT.format(
+                    telegram=self._contact_telegram_username,
+                    email=self._contact_email,
+                ),
+            )
         if command not in _LOCKED_COMMANDS:
             return None
 
@@ -232,6 +245,8 @@ class UserReplyService:
                 if version is not None:
                     user.version += 1
                 await self._users.save(user)
+        except LLMUnavailableError:
+            return ReplyOutcome(MODEL_UNAVAILABLE_TEXT)
         except LLMError:
             return ReplyOutcome(ADD_WORDS_PARSE_FAILED_TEXT)
         return ReplyOutcome(_add_words_reply(added, rejected), _pending_ask(pending))
@@ -256,7 +271,7 @@ class UserReplyService:
                 raise PendingQuestionNotFoundError
 
         outcome = await self._study_sessions.answer_pending(user, pending, text)
-        if outcome.text == CHECK_FAILED_TEXT:
+        if outcome.text in {CHECK_FAILED_TEXT, MODEL_UNAVAILABLE_TEXT}:
             return outcome
         if version is not None:
             async with self._transaction():
@@ -275,6 +290,8 @@ class UserReplyService:
             return ReplyOutcome(SCHEDULE_TIME_PROMPT)
         try:
             local_time = await self._language_model.parse_clock_time(answer)
+        except LLMUnavailableError:
+            return ReplyOutcome(MODEL_UNAVAILABLE_TEXT)
         except LLMError:
             return ReplyOutcome(SCHEDULE_PARSE_FAILED_TEXT)
         if local_time is None:
@@ -314,6 +331,8 @@ class UserReplyService:
             return ReplyOutcome(TIMEZONE_PROMPT)
         try:
             zone = await self._language_model.resolve_timezone(answer)
+        except LLMUnavailableError:
+            return ReplyOutcome(MODEL_UNAVAILABLE_TEXT)
         except LLMError:
             return ReplyOutcome(TIMEZONE_PARSE_FAILED_TEXT)
         if zone is None:
@@ -362,7 +381,10 @@ class UserReplyService:
             case _ as unexpected:
                 assert_never(unexpected)
 
-        question = await self._study_sessions.get_next_question(user)
+        try:
+            question = await self._study_sessions.get_next_question(user)
+        except LLMUnavailableError:
+            return ReplyOutcome(MODEL_UNAVAILABLE_TEXT)
         await self._user_service.refresh_next_run(user.telegram_user_id)
         if question is None:
             return ReplyOutcome(NO_WORDS_TEXT)

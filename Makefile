@@ -1,53 +1,58 @@
-DC_DEV = docker compose -f docker-compose.dev.yml
+DC_FILE ?= docker compose -f docker-compose.dev.yml
 
-.PHONY: up down shell migrate db stop ollama-pull ollama-up chat start-scheduler stop-scheduler logs-worker logs-tg-worker start-web stop-web logs-web
+.PHONY: up down shell migrate db stop ollama-pull ollama-up chat start-scheduler stop-scheduler logs-worker logs-tg-worker start-web stop-web logs-web dozzle-user
 
 MODEL ?= qwen3:4b
 
 up:
-	$(DC_DEV) up -d
+	$(DC_FILE) up -d
 
 down:
-	$(DC_DEV) down
+	$(DC_FILE) down
 
 shell:
-	$(DC_DEV) run --rm -it web bash
+	$(DC_FILE) run --rm -it web bash
 
 migrate:
-	$(DC_DEV) run --rm web poetry run alembic upgrade head
+	$(DC_FILE) run --rm web poetry run alembic upgrade head
 
 db:
-	$(DC_DEV) exec -it db sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
+	$(DC_FILE) exec -it db sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
 
 stop:
-	$(DC_DEV) down web scheduler worker telegram-worker rabbitmq
+	$(DC_FILE) down web scheduler worker telegram-worker rabbitmq
 
 ollama-up:
-	$(DC_DEV) up -d ollama
+	$(DC_FILE) up -d ollama
 
 ollama-pull:
-	$(DC_DEV) exec ollama ollama pull $(MODEL)
+	$(DC_FILE) exec ollama ollama pull $(MODEL)
 
 chat:
-	$(DC_DEV) run --rm web poetry run python -m app.cli chat
+	$(DC_FILE) run --rm web poetry run python -m app.cli chat
 
 start-scheduler:
-	$(DC_DEV) up -d scheduler
+	$(DC_FILE) up -d scheduler
 
 stop-scheduler:
-	$(DC_DEV) down scheduler worker telegram-worker
+	$(DC_FILE) down scheduler worker telegram-worker
 
 logs-worker:
-	$(DC_DEV) logs worker -f
+	$(DC_FILE) logs worker -f
 
 logs-tg-worker:
-	$(DC_DEV) logs telegram-worker -f
+	$(DC_FILE) logs telegram-worker -f
 
 start-web:
-	$(DC_DEV) up -d web
+	$(DC_FILE) up -d web
 
 stop-web:
-	$(DC_DEV) down web
+	$(DC_FILE) down web
 
 logs-web:
-	$(DC_DEV) logs web -f
+	$(DC_FILE) logs web -f
+
+dozzle-user:
+	@test -n "$(PASSWORD)" || (echo "PASSWORD is required" && exit 1)
+	mkdir -p dozzle-data
+	docker run --rm amir20/dozzle:v8 generate admin --password "$(PASSWORD)" --name Admin > dozzle-data/users.yml

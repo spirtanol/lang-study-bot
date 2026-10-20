@@ -1,4 +1,5 @@
 from .base import BaseModel, IdMixin, TimestampMixin
+from .chat_message import ChatMessage
 from .study_attempt import StudyAttempt
 from .study_schedule_slot import StudyScheduleSlot
 from .study_session import StudySession
@@ -9,6 +10,7 @@ from .vocabulary_item import VocabularyItem
 
 __all__ = (
     "BaseModel",
+    "ChatMessage",
     "IdMixin",
     "StudyAttempt",
     "StudyScheduleSlot",

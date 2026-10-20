@@ -1,3 +1,4 @@
+import secrets
 import sys
 from contextlib import asynccontextmanager
 
@@ -6,6 +7,7 @@ from fastapi import FastAPI
 
 from app.core.container import get_context_container
 from app.core.disposer import dispose
+from app.core.logging import logging_dict
 from app.defs import HOOK_PATH
 from app.routes.hook import router as hook_router
 
@@ -14,9 +16,11 @@ from app.routes.hook import router as hook_router
 async def lifespan(app: FastAPI):
     async with get_context_container() as container:
         app.state.container = container
+        app.state.webhook_secret = secrets.token_urlsafe(32)
         try:
             await container.telegram_client.set_webhook(
-                container.config.telegram_bot_url.rstrip("/") + HOOK_PATH
+                container.config.telegram_bot_url.rstrip("/") + HOOK_PATH,
+                app.state.webhook_secret,
             )
             await container.telegram_client.set_commands()
             yield
@@ -25,6 +29,7 @@ async def lifespan(app: FastAPI):
                 await container.telegram_client.delete_webhook()
             finally:
                 app.state.container = None
+                app.state.webhook_secret = None
                 await dispose()
 
 
@@ -35,7 +40,7 @@ app.include_router(hook_router)
 def main() -> None:
     host = sys.argv[1]
     port = int(sys.argv[2])
-    uvicorn.run(app, host=host, port=port)
+    uvicorn.run(app, host=host, port=port, log_config=logging_dict())
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ from app.defs import LEASE
 from app.graphs import AddWordsGraph, AnswerCheckGraph
 from app.llm import LLMProvider
 from app.repositories import (
+    ChatMessageRepository,
     StudyAttemptRepository,
     StudyScheduleSlotRepository,
     StudySessionRepository,
@@ -20,6 +21,7 @@ from app.repositories import (
     WordRepository,
 )
 from app.services import (
+    ChatMessageService,
     EventService,
     LanguageModelService,
     SchedulerService,
@@ -175,6 +177,18 @@ class Container:
         )
 
     @cached_property
+    def chat_message_repository(self) -> ChatMessageRepository:
+        return ChatMessageRepository(self.get_session)
+
+    @cached_property
+    def chat_message_service(self) -> ChatMessageService:
+        return ChatMessageService(
+            messages=self.chat_message_repository,
+            transaction=self.transaction,
+            retention_days=self.config.chat_message_retention_days,
+        )
+
+    @cached_property
     def telegram_update_repository(self) -> TelegramUpdateRepository:
         return TelegramUpdateRepository(self.get_session)
 
@@ -187,7 +201,10 @@ class Container:
 
     @cached_property
     def telegram_message_service(self) -> TelegramMessageService:
-        return TelegramMessageService(client=self.telegram_client)
+        return TelegramMessageService(
+            client=self.telegram_client,
+            messages=self.chat_message_service,
+        )
 
     @cached_property
     def telegram_update_service(self) -> TelegramUpdateService:
@@ -221,6 +238,8 @@ class Container:
             schedule=self.study_schedule_service,
             vocabulary=self.vocabulary_service,
             transaction=self.transaction,
+            contact_telegram_username=self.config.contact_telegram_username,
+            contact_email=self.config.contact_email,
         )
 
     @asynccontextmanager

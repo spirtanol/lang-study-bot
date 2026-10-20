@@ -10,7 +10,7 @@ from app.defs import (
     UserIntent,
 )
 from app.graphs import AnswerCheckGraph
-from app.llm import LLMError
+from app.llm import LLMError, LLMUnavailableError
 from app.models import StudyAttempt, StudySession, User
 from app.repositories import (
     ActiveStudySessionAlreadyExistsError,
@@ -28,6 +28,7 @@ from app.telegram.texts import (
     CORRECT_TEXT,
     INCORRECT_COUNT_LABEL,
     INCORRECT_TEXT,
+    MODEL_UNAVAILABLE_TEXT,
     NO_ACTIVE_SESSION_TEXT,
     POSSIBLE_TRANSLATIONS_TEXT,
     REVIEWED_COUNT_LABEL,
@@ -270,6 +271,8 @@ class StudySessionService:
                     answer,
                     pending.translations,
                 )
+            except LLMUnavailableError:
+                return ReplyOutcome(MODEL_UNAVAILABLE_TEXT)
             except LLMError:
                 return ReplyOutcome(CHECK_FAILED_TEXT)
             accepted = verdict.accepted
@@ -358,7 +361,10 @@ class StudySessionService:
             <= datetime.now(timezone.utc)
         )
         if not expired:
-            question = await self.get_next_question(user)
+            try:
+                question = await self.get_next_question(user)
+            except LLMUnavailableError:
+                return ReplyOutcome(f"{feedback}\n\n{MODEL_UNAVAILABLE_TEXT}")
             if question is not None:
                 return ReplyOutcome(feedback, question)
 

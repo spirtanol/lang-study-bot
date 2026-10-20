@@ -60,7 +60,24 @@ WELCOME = TelegramMessage(
     text=WELCOME_TEXT,
     reply_markup=InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="ок", callback_data="ok")],
+            [
+                InlineKeyboardButton(
+                    text="Задать расписание",
+                    callback_data=TelegramCommand.SETUP_SCHEDULE,
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Задать таймзону",
+                    callback_data=TelegramCommand.TIMEZONE,
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Добавить слова",
+                    callback_data=TelegramCommand.ADD_WORDS,
+                ),
+            ],
         ],
     ),
 )

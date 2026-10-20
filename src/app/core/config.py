@@ -21,6 +21,7 @@ class AppSettings(BaseSettings):
     schedule_slot_gap_minutes: int = Field(default=120, ge=0, le=24 * 60)
     session_timeout_minutes: int = Field(default=15, ge=1)
     session_duration_minutes: int = Field(default=15, ge=1)
+    chat_message_retention_days: int = Field(default=7, ge=1)
 
     # RabbitMQ
     rabbitmq_url: str = Field(..., env="RABBITMQ_URL")
@@ -43,6 +44,8 @@ class AppSettings(BaseSettings):
     )
     telegram_bot_token: str = Field(default="", env="TELEGRAM_BOT_TOKEN")
     telegram_bot_url: str = Field(..., env="TELEGRAM_BOT_URL")
+    contact_telegram_username: str = Field(..., env="CONTACT_TELEGRAM_USERNAME")
+    contact_email: str = Field(..., env="CONTACT_EMAIL")
 
     @model_validator(mode="after")
     def require_gemini_api_key(self) -> "AppSettings":

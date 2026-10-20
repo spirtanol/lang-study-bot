@@ -49,8 +49,8 @@ class TelegramClient:
             ]
         )
 
-    async def set_webhook(self, url: str) -> None:
-        await self._bot.set_webhook(url=url)
+    async def set_webhook(self, url: str, secret_token: str) -> None:
+        await self._bot.set_webhook(url=url, secret_token=secret_token)
 
     async def delete_webhook(self) -> None:
         await self._bot.delete_webhook()

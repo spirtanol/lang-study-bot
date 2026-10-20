@@ -23,3 +23,10 @@ def is_rate_limited(error: BaseException) -> bool:
         return True
     response = getattr(error, "response", None)
     return getattr(response, "status_code", None) == 429
+
+
+def is_unavailable(error: BaseException) -> bool:
+    if getattr(error, "code", None) == 503 or getattr(error, "status_code", None) == 503:
+        return True
+    response = getattr(error, "response", None)
+    return getattr(response, "status_code", None) == 503

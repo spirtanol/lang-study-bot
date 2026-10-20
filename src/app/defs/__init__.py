@@ -1,6 +1,7 @@
 from .consts import HOOK_PATH, LEASE, SCHEDULE_START_WINDOW, TELEGRAM_UPDATE_TTL
 from .enums import (
     FamiliarityLevel,
+    MessageDirect,
     StartSessionResult,
     StudyAttemptStatus,
     StudySessionStatus,
@@ -14,6 +15,7 @@ __all__ = (
     "SCHEDULE_START_WINDOW",
     "TELEGRAM_UPDATE_TTL",
     "FamiliarityLevel",
+    "MessageDirect",
     "StartSessionResult",
     "StudyAttemptStatus",
     "StudySessionStatus",
