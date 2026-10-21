@@ -16,6 +16,7 @@ htmlcov/
 .ruff_cache/
 .env*
 !.env.example
+/texts.local.toml
 .idea/
 .vscode/
 .DS_Store

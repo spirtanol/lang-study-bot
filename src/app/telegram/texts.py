@@ -1,10 +1,12 @@
+import tomllib
+from pathlib import Path
+
 CONTACTS_TEXT = (
     "💬 **Обратная связь и поддержка**\n\n"
     "Если у вас есть вопросы, предложения по улучшению или вы обнаружили ошибку, "
     "буду рад любой обратной связи!\n\n"
     "✈️ **Telegram:** @{telegram}\n"
     "📧 **Email:** {email}\n\n"
-    "Пишите в любое время, постараюсь ответить как можно быстрее!"
 )
 
 WELCOME_TEXT = (
@@ -78,3 +80,43 @@ STUDY_TIME_TEXT = "🔔 Пора позаниматься!"
 SESSION_MISSED_TIMEOUT_TEXT = "⏱ Занятие не состоялось (истёк срок ожидания)."
 SESSION_FINISHED_TIMEOUT_TEXT = "⏱ Занятие завершено по таймауту."
 SESSION_MISSED_DUE_TIMEOUT_TEXT = "⏱ Занятие пропущено из-за таймаута."
+
+_OVERRIDABLE_TEXTS = frozenset({"CONTACTS_TEXT", "WELCOME_TEXT"})
+
+
+def _apply_local_texts() -> None:
+    global CONTACTS_TEXT, WELCOME_TEXT
+
+    path = Path.cwd() / "texts.local.toml"
+    if not path.is_file():
+        return
+
+    overrides = tomllib.loads(path.read_text(encoding="utf-8"))
+    unknown = sorted(set(overrides) - _OVERRIDABLE_TEXTS)
+    if unknown:
+        names = ", ".join(unknown)
+        raise ValueError(f"В texts.local.toml неизвестные ключи: {names}")
+
+    applied: dict[str, str] = {}
+    for key, value in overrides.items():
+        if not isinstance(value, str):
+            raise ValueError(f"texts.local.toml: {key} должен быть строкой")
+        applied[key] = value.removesuffix("\n")
+
+    contacts = applied.get("CONTACTS_TEXT")
+    if contacts is not None:
+        try:
+            contacts.format(telegram="telegram", email="email")
+        except (IndexError, KeyError, ValueError) as exc:
+            raise ValueError(
+                "CONTACTS_TEXT в texts.local.toml не подставляется "
+                "через {telegram} и {email}"
+            ) from exc
+        CONTACTS_TEXT = contacts
+
+    welcome = applied.get("WELCOME_TEXT")
+    if welcome is not None:
+        WELCOME_TEXT = welcome
+
+
+_apply_local_texts()
