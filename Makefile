@@ -1,6 +1,6 @@
 DC_FILE ?= docker compose -f docker-compose.dev.yml
 
-.PHONY: up down shell migrate db stop ollama-pull ollama-up chat start-scheduler stop-scheduler logs-worker logs-tg-worker start-web stop-web logs-web dozzle-user
+.PHONY: up down shell migrate db stop ollama-pull ollama-up chat start-scheduler stop-scheduler logs-worker logs-tg-worker start-web stop-web logs-web dozzle-user restart
 
 MODEL ?= qwen3:4b
 
@@ -18,6 +18,9 @@ migrate:
 
 db:
 	$(DC_FILE) exec -it db sh -c 'psql -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"'
+
+restart:
+	$(DC_FILE) restart web scheduler worker telegram-worker
 
 stop:
 	$(DC_FILE) down web scheduler worker telegram-worker rabbitmq
