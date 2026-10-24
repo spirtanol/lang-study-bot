@@ -49,6 +49,19 @@ class StudyAttemptRepository:
         )
         return await self._get_session().scalar(statement)
 
+    async def list_recent_question_texts(
+        self,
+        vocabulary_item_id: int,
+        limit: int,
+    ) -> list[str]:
+        statement = (
+            select(StudyAttempt.question_text)
+            .where(StudyAttempt.vocabulary_item_id == vocabulary_item_id)
+            .order_by(StudyAttempt.created_at.desc(), StudyAttempt.id.desc())
+            .limit(limit)
+        )
+        return list(await self._get_session().scalars(statement))
+
     async def get_pending(self, session_id: int) -> PendingQuestion | None:
         statement = (
             select(

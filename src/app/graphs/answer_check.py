@@ -23,6 +23,12 @@ class TranslationChecks(Protocol):
         translations: tuple[str, ...] = (),
     ) -> VerdictReview: ...
 
+    async def correct_translations(
+        self,
+        word: str,
+        translations: tuple[str, ...] = (),
+    ) -> list[str]: ...
+
 
 class AnswerCheckState(TypedDict):
     word: str
@@ -71,16 +77,24 @@ def _compile(language_model: TranslationChecks) -> CompiledStateGraph:
     graph = StateGraph(AnswerCheckState)
     graph.add_node("check", _check(language_model))
     graph.add_node("review", _review(language_model))
+    graph.add_node("translations", _translations(language_model))
     graph.add_edge(START, "check")
     graph.add_conditional_edges("check", _route_after_check)
-    graph.add_edge("review", END)
+    graph.add_conditional_edges("review", _route_after_review)
+    graph.add_edge("translations", END)
     return graph.compile()
 
 
 def _route_after_check(state: AnswerCheckState) -> str:
     if state["is_russian"] and state["is_correct"]:
         return "review"
-    return END
+    return "translations"
+
+
+def _route_after_review(state: AnswerCheckState) -> str:
+    if state["accepted"]:
+        return END
+    return "translations"
 
 
 def _check(language_model: TranslationChecks):
@@ -113,6 +127,21 @@ def _review(language_model: TranslationChecks):
         )
         if review.verdict_holds:
             return {"accepted": True, "remarks": ""}
-        return {"accepted": False, "remarks": review.remarks}
+        return {"accepted": False}
+
+    return node
+
+
+def _translations(language_model: TranslationChecks):
+    async def node(state: AnswerCheckState) -> dict[str, str]:
+        items = await language_model.correct_translations(
+            state["word"],
+            tuple(state["translations"]),
+        )
+        answer = ", ".join(items)
+        remark = state["remarks"].strip()
+        if remark:
+            return {"remarks": f"{remark}\n{answer}"}
+        return {"remarks": answer}
 
     return node

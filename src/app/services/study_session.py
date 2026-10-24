@@ -46,6 +46,7 @@ from .exceptions import ActiveStudySessionNotFoundError, NoStudyWordsError
 from .language_model import ASK_TRANSLATION_TEXT, LanguageModelService
 
 QUESTION_PICK_ATTEMPTS = 3
+PREVIOUS_QUESTIONS_LIMIT = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,8 +218,14 @@ class StudySessionService:
 
         attempt_number = 0
         while True:
+            async with self._transaction():
+                previous = await self._study_attempts.list_recent_question_texts(
+                    item.vocabulary_item_id,
+                    PREVIOUS_QUESTIONS_LIMIT,
+                )
             question_text = await self._language_model.build_question_text(
                 item.word,
+                previous,
             )
             try:
                 async with self._transaction():

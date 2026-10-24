@@ -37,7 +37,8 @@ TRANSLATION_CHECK_SYSTEM_PROMPT = (
     "A match or a close wording of a reference is correct. "
     "A different valid Russian translation is also correct: "
     "the list is not exhaustive. "
-    "When the answer is not accepted, write brief remarks in Russian. "
+    "When the answer is not accepted, write a brief remark in Russian. "
+    "The remark must not contain the correct translation. "
     "When it is accepted, leave remarks empty."
 )
 VERDICT_REVIEW_SYSTEM_PROMPT = (
@@ -46,15 +47,17 @@ VERDICT_REVIEW_SYSTEM_PROMPT = (
     "Set verdict_holds to true only if that verdict correctly judges the answer. "
     "A remark such as «верно» or «правильно» is not a translation. "
     "A verdict that accepts it does not hold. "
-    "When the verdict does not hold, remarks are only the correct Russian "
-    "translations of the English word or phrase: one to five short items, "
-    "separated by commas, and nothing else. "
-    "Use the reference translations when they are given. "
-    "Do not discuss the learner's answer and do not translate it into English. "
+    "Leave remarks empty."
+)
+CORRECT_TRANSLATIONS_SYSTEM_PROMPT = (
+    "Give the correct Russian translations of the English word or phrase. "
+    "Return one to five short items and nothing else. "
+    "When reference translations are given, return those items. "
+    "Do not discuss any learner answer. "
+    "Do not repeat the English text. "
     "«пошатнуться означает потерять равновесие и не соответствует flinch» "
     "is wrong; write «вздрогнуть, дрогнуть». "
-    "«Вина означает guilt, а не conscience» is wrong; write «совесть». "
-    "When the verdict holds, leave remarks empty."
+    "«Вина означает guilt, а не conscience» is wrong; write «совесть»."
 )
 SUGGEST_TRANSLATIONS_SYSTEM_PROMPT = (
     "Give possible Russian translations of the English word or phrase. "
@@ -181,12 +184,21 @@ class LanguageModelService:
             logger.info("Ответ %s мс %s", elapsed_ms, result.model_dump())
             return result
 
-    async def build_question_text(self, word: str) -> str:
+    async def build_question_text(
+        self,
+        word: str,
+        previous: Sequence[str] = (),
+    ) -> str:
+        avoid = _example_sentences(previous)
+        content = word
+        if avoid:
+            banned = "\n".join(avoid)
+            content = f"{word}\n\nDo not reuse these sentences:\n{banned}"
         try:
             usage = await self._generate_structured(
                 (
                     LLMMessage(role="system", content=WORD_USAGE_SYSTEM_PROMPT),
-                    LLMMessage(role="user", content=word),
+                    LLMMessage(role="user", content=content),
                 ),
                 WordUsage,
             )
@@ -271,6 +283,37 @@ class LanguageModelService:
             return None
         return _iana_name(parsed.timezone)
 
+    async def correct_translations(
+        self,
+        word: str,
+        translations: tuple[str, ...] = (),
+    ) -> list[str]:
+        lines = [f"English: {word}"]
+        references = [item.strip() for item in translations if item.strip()]
+        if references:
+            lines.append(f"Reference translations: {'; '.join(references)}")
+        result = await self._generate_structured(
+            (
+                LLMMessage(
+                    role="system",
+                    content=CORRECT_TRANSLATIONS_SYSTEM_PROMPT,
+                ),
+                LLMMessage(role="user", content="\n".join(lines)),
+            ),
+            WordTranslations,
+        )
+        found: list[str] = []
+        seen: set[str] = set()
+        for item in result.translations:
+            translation = item.strip()
+            if not translation or translation in seen:
+                continue
+            seen.add(translation)
+            found.append(translation)
+        if not found:
+            raise LLMResponseError("Модель не вернула переводы")
+        return found
+
     async def suggest_translations(self, word: str) -> list[str]:
         result = await self._generate_structured(
             (
@@ -320,6 +363,19 @@ class LanguageModelService:
             WordList,
         )
         return result.is_word_list
+
+
+def _example_sentences(question_texts: Sequence[str]) -> list[str]:
+    sentences: list[str] = []
+    seen: set[str] = set()
+    for question_text in question_texts:
+        for line in question_text.splitlines():
+            sentence = line.strip()
+            if not sentence or sentence == ASK_TRANSLATION_TEXT or sentence in seen:
+                continue
+            seen.add(sentence)
+            sentences.append(sentence)
+    return sentences
 
 
 def _answer_message(
