@@ -10,6 +10,7 @@ class TelegramCommand(StrEnum):
     TIMEZONE = "timezone"
     CANCEL = "cancel"
     ADD_WORDS = "add_words"
+    ADD_BATCH = "add_batch"
     STUDY = "study"
     DONT_KNOW = "dont_know"
     FINISH = "finish"

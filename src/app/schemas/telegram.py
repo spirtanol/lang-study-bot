@@ -1,5 +1,7 @@
-from typing import Self, cast
+from abc import ABC
+from typing import Literal, Self, cast
 
+from aiogram.types import ReplyMarkupUnion
 from pydantic import AliasPath, BaseModel, ConfigDict, Field, model_validator
 
 
@@ -48,3 +50,19 @@ class IncomingTelegramUpdate(BaseModel):
         if self.message is not None:
             return self.message.text
         return cast(TelegramCallbackQuery, self.callback_query).data
+
+
+class TelegramMethodResponse(BaseModel, ABC):
+    method: str
+
+
+class AnswerCallbackQueryResponse(TelegramMethodResponse):
+    method: Literal["answerCallbackQuery"] = "answerCallbackQuery"
+    callback_query_id: str = Field(min_length=1)
+
+
+class SendMessageResponse(TelegramMethodResponse):
+    method: Literal["sendMessage"] = "sendMessage"
+    chat_id: int = Field(strict=True)
+    text: str
+    reply_markup: ReplyMarkupUnion | None = None

@@ -5,8 +5,9 @@ from .study_schedule_slot import StudyScheduleSlot
 from .study_session import StudySession
 from .telegram_update import TelegramUpdate
 from .user import User
-from .word import Word
 from .vocabulary_item import VocabularyItem
+from .word import Word
+from .word_add_batch import WordAddBatch
 
 __all__ = (
     "BaseModel",
@@ -20,4 +21,5 @@ __all__ = (
     "User",
     "VocabularyItem",
     "Word",
+    "WordAddBatch",
 )

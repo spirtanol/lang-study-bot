@@ -7,15 +7,19 @@ from app.events.tasks.setup_schedule import emit_setup_schedule
 from app.events.tasks.study import emit_study
 from app.events.tasks.telegram import emit_telegram
 from app.events.tasks.timezone import emit_timezone
+from app.events.tasks.translate import emit_translate
+from app.events.tasks.word_add_batch import emit_delete_old_word_add_batches
 
 __all__ = [
     "emit_add_words",
     "emit_answer",
     "emit_delete_old_chat_messages",
+    "emit_delete_old_word_add_batches",
     "emit_dont_know",
     "emit_schedule",
     "emit_setup_schedule",
     "emit_study",
     "emit_telegram",
     "emit_timezone",
+    "emit_translate",
 ]

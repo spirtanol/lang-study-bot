@@ -46,9 +46,15 @@ VERDICT_REVIEW_SYSTEM_PROMPT = (
     "Set verdict_holds to true only if that verdict correctly judges the answer. "
     "A remark such as «верно» or «правильно» is not a translation. "
     "A verdict that accepts it does not hold. "
-    "When the verdict does not hold, write brief remarks in Russian "
-    "and always list the correct translations. "
-    "When it holds, leave remarks empty."
+    "When the verdict does not hold, remarks are only the correct Russian "
+    "translations of the English word or phrase: one to five short items, "
+    "separated by commas, and nothing else. "
+    "Use the reference translations when they are given. "
+    "Do not discuss the learner's answer and do not translate it into English. "
+    "«пошатнуться означает потерять равновесие и не соответствует flinch» "
+    "is wrong; write «вздрогнуть, дрогнуть». "
+    "«Вина означает guilt, а не conscience» is wrong; write «совесть». "
+    "When the verdict holds, leave remarks empty."
 )
 SUGGEST_TRANSLATIONS_SYSTEM_PROMPT = (
     "Give possible Russian translations of the English word or phrase. "
@@ -60,6 +66,16 @@ IS_ENGLISH_WORD_SYSTEM_PROMPT = (
     "Decide whether the text is an English word or phrase. "
     "Set is_english to true for cucumber. "
     "Set is_english to false for asdf. "
+    "Return only the structured field."
+)
+IS_WORD_LIST_SYSTEM_PROMPT = (
+    "Decide whether the user message is a vocabulary list of English words "
+    "or short phrases. "
+    "Items are separated by commas, semicolons, or line breaks. "
+    "Set is_word_list to true for «apple, pear» and for one English word "
+    "or phrase per line. "
+    "Set is_word_list to false for a sentence, a question, or a conversation. "
+    "A message in Russian is not a word list. "
     "Return only the structured field."
 )
 IS_PROPER_NAME_SYSTEM_PROMPT = (
@@ -97,6 +113,10 @@ class WordTranslations(BaseModel):
 
 class EnglishWord(BaseModel):
     is_english: bool
+
+
+class WordList(BaseModel):
+    is_word_list: bool
 
 
 class ProperName(BaseModel):
@@ -290,6 +310,16 @@ class LanguageModelService:
             ProperName,
         )
         return result.is_proper_name
+
+    async def is_word_list(self, text: str) -> bool:
+        result = await self._generate_structured(
+            (
+                LLMMessage(role="system", content=IS_WORD_LIST_SYSTEM_PROMPT),
+                LLMMessage(role="user", content=text),
+            ),
+            WordList,
+        )
+        return result.is_word_list
 
 
 def _answer_message(

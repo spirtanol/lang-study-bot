@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.telegram.command import TELEGRAM_COMMANDS_CAPTIONS, TelegramCommand
@@ -56,6 +58,21 @@ STUDY_TIME_MARKUP = InlineKeyboardMarkup(
         ],
     ],
 )
+
+
+def add_batch_markup(batch_id: UUID) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Добавить в словарь",
+                    callback_data=f"{TelegramCommand.ADD_BATCH}:{batch_id}",
+                ),
+            ],
+        ],
+    )
+
+
 WELCOME = TelegramMessage(
     text=WELCOME_TEXT,
     reply_markup=InlineKeyboardMarkup(

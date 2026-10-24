@@ -16,6 +16,7 @@ from .telegram_update import TelegramUpdateRepository
 from .user import UserRepository
 from .vocabulary_item import PickedItem, VocabularyItemRepository
 from .word import WordRepository
+from .word_add_batch import WordAddBatchRepository
 
 __all__ = (
     "ActiveStudySessionAlreadyExistsError",
@@ -32,5 +33,6 @@ __all__ = (
     "UserAlreadyExistsError",
     "UserRepository",
     "VocabularyItemRepository",
+    "WordAddBatchRepository",
     "WordRepository",
 )

@@ -22,6 +22,7 @@ from .user import UserGetOrCreate, UserService
 from .user_reply import UserReplyService
 from .vocabulary import VocabularyService
 from .word import WordService
+from .word_add_batch import WordAddBatchService
 
 __all__ = (
     "ActiveStudySessionNotFoundError",
@@ -43,6 +44,7 @@ __all__ = (
     "UserReplyService",
     "UserService",
     "VocabularyService",
+    "WordAddBatchService",
     "WordNotAdded",
     "WordService",
 )

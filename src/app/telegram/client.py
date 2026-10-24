@@ -7,7 +7,7 @@ from aiogram.types import BotCommand, ReplyMarkupUnion
 
 from app.core.disposer import reg_to_dispose
 
-from .command import TELEGRAM_COMMAND_DESCRIPTIONS, TelegramCommand
+from .command import TELEGRAM_COMMAND_DESCRIPTIONS
 
 
 @lru_cache
@@ -43,9 +43,9 @@ class TelegramClient:
             [
                 BotCommand(
                     command=command.value,
-                    description=TELEGRAM_COMMAND_DESCRIPTIONS[command],
+                    description=description,
                 )
-                for command in TelegramCommand
+                for command, description in TELEGRAM_COMMAND_DESCRIPTIONS.items()
             ]
         )
 

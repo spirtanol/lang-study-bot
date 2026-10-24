@@ -2,6 +2,7 @@ import re
 from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import assert_never
+from uuid import UUID
 
 from app.defs import StartSessionResult, StudySessionStatus, UserIntent
 from app.llm import LLMError, LLMUnavailableError
@@ -18,6 +19,7 @@ from app.telegram.reply import (
     CANCEL_MARKUP,
     QUESTION_REPLY_MARKUP,
     WELCOME,
+    add_batch_markup,
 )
 from app.telegram.texts import (
     ADD_WORDS_PARSE_FAILED_TEXT,
@@ -44,6 +46,8 @@ from app.telegram.texts import (
     TIMEZONE_PARSE_FAILED_TEXT,
     TIMEZONE_PROMPT,
     TIMEZONE_SET_TEXT,
+    WORD_BATCH_EXPIRED_TEXT,
+    WORDS_ADDED_TEXT,
 )
 
 from .exceptions import (
@@ -61,6 +65,8 @@ from .study_session import (
     StudySessionService,
 )
 from .vocabulary import VocabularyService
+from .word import WordService
+from .word_add_batch import WordAddBatchService
 
 _LOCKED_COMMANDS = {
     TelegramCommand.SCHEDULE,
@@ -87,6 +93,8 @@ class UserReplyService:
         user_service: UserService,
         schedule: StudyScheduleService,
         vocabulary: VocabularyService,
+        words: WordService,
+        batches: WordAddBatchService,
         transaction: Callable[[], AbstractAsyncContextManager[None]],
         contact_telegram_username: str,
         contact_email: str,
@@ -99,6 +107,8 @@ class UserReplyService:
         self._user_service = user_service
         self._schedule = schedule
         self._vocabulary = vocabulary
+        self._words = words
+        self._batches = batches
         self._transaction = transaction
         self._contact_telegram_username = contact_telegram_username
         self._contact_email = contact_email
@@ -109,23 +119,26 @@ class UserReplyService:
         command: str,
         version: int | None = None,
     ) -> TelegramMessage | None:
-        if command == TelegramCommand.START:
+        name, _, params = command.partition(":")
+        if name == TelegramCommand.ADD_BATCH:
+            return await self._add_batch(user_id, params)
+        if name == TelegramCommand.START:
             return WELCOME
-        if command == TelegramCommand.CONTACTS:
+        if name == TelegramCommand.CONTACTS:
             return TelegramMessage(
                 text=CONTACTS_TEXT.format(
                     telegram=self._contact_telegram_username,
                     email=self._contact_email,
                 ),
             )
-        if command not in _LOCKED_COMMANDS:
+        if name not in _LOCKED_COMMANDS:
             return None
 
         async with self._transaction():
             user = await self._users.lock_user(user_id)
             if user is None:
                 return None
-            match command:
+            match name:
                 case TelegramCommand.SCHEDULE:
                     slots = await self._schedule.get_schedule(user_id)
                     return TelegramMessage(
@@ -176,7 +189,7 @@ class UserReplyService:
                     pass
                 case _:
                     return None
-        match command:
+        match name:
             case TelegramCommand.STUDY:
                 reply = await self._start_study(user)
             case TelegramCommand.DONT_KNOW:
@@ -207,6 +220,77 @@ class UserReplyService:
         return ReplyOutcome(
             _schedule_text(user.timezone, slots, SCHEDULE_DAILY_TITLE),
         )
+
+    async def handle_translate(
+        self,
+        user_id: int,
+        version: int,
+        text: str,
+    ) -> TelegramMessage | None:
+        if not await self._has_version(user_id, version):
+            raise UserVersionError
+
+        try:
+            is_list = await self._language_model.is_word_list(text)
+        except LLMUnavailableError:
+            return await self._unavailable_reply(user_id, version)
+        except LLMError:
+            return None
+        if not is_list:
+            return None
+
+        accepted: list[Word] = []
+        seen: set[int] = set()
+        for word_text in _split_words(text):
+            try:
+                word = await self._words.get_or_create(word_text)
+            except WordNotAdded:
+                continue
+            except LLMUnavailableError:
+                return await self._unavailable_reply(user_id, version)
+            except LLMError:
+                continue
+            if word.id in seen:
+                continue
+            seen.add(word.id)
+            accepted.append(word)
+        if not accepted:
+            return None
+
+        batch_id = await self._batches.add([word.id for word in accepted])
+        if not await self._has_version(user_id, version):
+            await self._batches.remove_batch(batch_id)
+            raise UserVersionError
+        return TelegramMessage(
+            text=_word_translation_lines(accepted),
+            reply_markup=add_batch_markup(batch_id),
+        )
+
+    async def _add_batch(self, user_id: int, batch: str) -> TelegramMessage:
+        try:
+            batch_id = UUID(batch)
+        except ValueError:
+            return TelegramMessage(text=WORD_BATCH_EXPIRED_TEXT)
+        word_ids = await self._batches.word_ids(batch_id)
+        if not word_ids:
+            return TelegramMessage(text=WORD_BATCH_EXPIRED_TEXT)
+        await self._vocabulary.add_by_ids(user_id, word_ids)
+        await self._batches.remove_batch(batch_id)
+        return TelegramMessage(text=WORDS_ADDED_TEXT)
+
+    async def _has_version(self, user_id: int, version: int) -> bool:
+        async with self._transaction():
+            user = await self._users.lock_for_version(user_id, version)
+            return user is not None
+
+    async def _unavailable_reply(
+        self,
+        user_id: int,
+        version: int,
+    ) -> TelegramMessage:
+        if not await self._has_version(user_id, version):
+            raise UserVersionError
+        return TelegramMessage(text=MODEL_UNAVAILABLE_TEXT)
 
     async def handle_add_words(
         self,
@@ -460,6 +544,17 @@ def _split_words(text: str) -> list[str]:
         seen.add(key)
         words.append(word)
     return words
+
+
+def _word_translation_lines(words: Sequence[Word]) -> str:
+    lines: list[str] = []
+    for word in words:
+        translations = ", ".join(word.translations)
+        if translations:
+            lines.append(f"{word.text} — {translations}.")
+        else:
+            lines.append(f"{word.text}.")
+    return "\n".join(lines)
 
 
 def _add_words_reply(added: list[Word], rejected: list[tuple[str, str]]) -> str:

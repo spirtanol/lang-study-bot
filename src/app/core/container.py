@@ -18,6 +18,7 @@ from app.repositories import (
     TelegramUpdateRepository,
     UserRepository,
     VocabularyItemRepository,
+    WordAddBatchRepository,
     WordRepository,
 )
 from app.services import (
@@ -32,6 +33,7 @@ from app.services import (
     UserReplyService,
     UserService,
     VocabularyService,
+    WordAddBatchService,
     WordService,
 )
 from app.telegram import TelegramClient
@@ -162,6 +164,18 @@ class Container:
         )
 
     @cached_property
+    def word_add_batch_repository(self) -> WordAddBatchRepository:
+        return WordAddBatchRepository(self.get_session)
+
+    @cached_property
+    def word_add_batch_service(self) -> WordAddBatchService:
+        return WordAddBatchService(
+            repository=self.word_add_batch_repository,
+            transaction=self.transaction,
+            retention_hours=self.config.word_add_batch_retention_hours,
+        )
+
+    @cached_property
     def study_session_service(self) -> StudySessionService:
         return StudySessionService(
             repository=self.study_session_repository,
@@ -237,6 +251,8 @@ class Container:
             user_service=self.user_service,
             schedule=self.study_schedule_service,
             vocabulary=self.vocabulary_service,
+            words=self.word_service,
+            batches=self.word_add_batch_service,
             transaction=self.transaction,
             contact_telegram_username=self.config.contact_telegram_username,
             contact_email=self.config.contact_email,

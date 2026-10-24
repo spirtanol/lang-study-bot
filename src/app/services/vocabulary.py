@@ -25,6 +25,17 @@ class VocabularyService:
     async def add_items(self, user_id: int, texts: Sequence[str]) -> list[Word]:
         return [await self.add_item(user_id, text) for text in texts]
 
+    async def add_by_ids(self, user_id: int, word_ids: Sequence[int]) -> None:
+        async with self._transaction():
+            for word_id in word_ids:
+                await self._repository.add(
+                    VocabularyItem(
+                        user_id=user_id,
+                        word_id=word_id,
+                        points=0,
+                    )
+                )
+
     async def add_item(self, user_id: int, text: str) -> Word:
         word = await self._words.get_or_create(text)
         async with self._transaction():

@@ -21,8 +21,6 @@ from app.telegram.texts import (
     STUDY_TIME_TEXT,
 )
 
-NOTIFY_CHAT_ID = 5086275193
-
 
 async def _handle(
     user_telegram_id: int,
@@ -113,7 +111,7 @@ async def _handle(
             reply_markup = None
         await container.event_service.publish(
             emit_telegram(
-                NOTIFY_CHAT_ID,
+                user_telegram_id,
                 TelegramMessage(text=message, reply_markup=reply_markup),
             ),
         )

@@ -1,3 +1,4 @@
+import unicodedata
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 
@@ -9,6 +10,18 @@ from .exceptions import WordNotAdded
 
 WORD_TEXT_MAX_LENGTH = 256
 _TOO_LONG_REASON = "слишком длинное"
+
+
+def _clean_single_word(text: str) -> str:
+    if len(text.split()) != 1:
+        return text
+    start = 0
+    end = len(text)
+    while start < end and unicodedata.category(text[start]).startswith("P"):
+        start += 1
+    while end > start and unicodedata.category(text[end - 1]).startswith("P"):
+        end -= 1
+    return text[start:end]
 
 
 class WordService:
@@ -23,7 +36,7 @@ class WordService:
         self._transaction = transaction
 
     async def get_or_create(self, text: str) -> Word:
-        word_text = text.strip().lower()
+        word_text = _clean_single_word(text.strip().lower())
         if not word_text or len(word_text) > WORD_TEXT_MAX_LENGTH:
             raise WordNotAdded(_TOO_LONG_REASON)
 

@@ -24,10 +24,12 @@ class SchedulerService:
         self._transaction = transaction
         self._lease = lease
         self._next_chat_cleanup: datetime | None = None
+        self._next_batch_cleanup: datetime | None = None
 
     async def run(self) -> None:
         await self.dispatch_due()
         await self._publish_chat_cleanup()
+        await self._publish_batch_cleanup()
 
     async def _publish_chat_cleanup(self) -> None:
         from app.events.tasks import emit_delete_old_chat_messages
@@ -41,6 +43,19 @@ class SchedulerService:
             logger.exception("Не удалось опубликовать очистку старых сообщений")
             return
         self._next_chat_cleanup = now + timedelta(hours=1)
+
+    async def _publish_batch_cleanup(self) -> None:
+        from app.events.tasks import emit_delete_old_word_add_batches
+
+        now = datetime.now(timezone.utc)
+        if self._next_batch_cleanup is not None and now < self._next_batch_cleanup:
+            return
+        try:
+            await self._events.publish(emit_delete_old_word_add_batches())
+        except Exception:
+            logger.exception("Не удалось опубликовать очистку старых списков слов")
+            return
+        self._next_batch_cleanup = now + timedelta(hours=1)
 
     async def dispatch_due(self) -> None:
         from app.events.tasks import emit_schedule

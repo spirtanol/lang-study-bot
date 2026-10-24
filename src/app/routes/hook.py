@@ -3,7 +3,6 @@ import secrets
 from pathlib import Path
 
 from fastapi import APIRouter, Header, Request, Response
-from fastapi.responses import JSONResponse
 
 from app.core.container import Container
 from app.core.logging import user_telegram_id
@@ -16,10 +15,17 @@ from app.events.tasks import (
     emit_study,
     emit_telegram,
     emit_timezone,
+    emit_translate,
 )
-from app.schemas import IncomingTelegramUpdate
+from app.schemas import (
+    AnswerCallbackQueryResponse,
+    IncomingTelegramUpdate,
+    SendMessageResponse,
+    TelegramMethodResponse,
+)
 from app.telegram import TelegramCommand
 from app.telegram.reply import WELCOME
+from app.telegram.texts import ADD_WORDS_ACCEPTED_TEXT
 
 _INCOMING_PATH = Path("telegram.txt")
 
@@ -28,16 +34,16 @@ logger = logging.getLogger("app.hook")
 router = APIRouter()
 
 
-def fallback(text: str) -> None:
-    pass
-
-
-@router.post(HOOK_PATH)
+@router.post(
+    HOOK_PATH,
+    response_model=AnswerCallbackQueryResponse | SendMessageResponse,
+    response_model_exclude_none=True,
+)
 async def hook(
     update: IncomingTelegramUpdate,
     request: Request,
     secret_token: str = Header(default="", alias="X-Telegram-Bot-Api-Secret-Token"),
-) -> Response:
+) -> Response | TelegramMethodResponse:
     expected = request.app.state.webhook_secret
     if not isinstance(expected, str) or not secrets.compare_digest(secret_token, expected):
         logger.warning("Отклонён запрос хука: неверный secret token")
@@ -45,12 +51,10 @@ async def hook(
 
     try:
         container: Container = request.app.state.container
+        response: Response | TelegramMethodResponse
         if update.callback_query is not None:
-            response: Response = JSONResponse(
-                {
-                    "method": "answerCallbackQuery",
-                    "callback_query_id": update.callback_query.query_id,
-                }
+            response = AnswerCallbackQueryResponse(
+                callback_query_id=update.callback_query.query_id,
             )
         else:
             response = Response(status_code=200)
@@ -87,9 +91,21 @@ async def hook(
                         command,
                     )
                     if message is not None:
-                        await container.event_service.publish(
-                            emit_telegram(user.telegram_user_id, message),
-                        )
+                        if update.callback_query is not None:
+                            await container.event_service.publish(
+                                emit_telegram(user.telegram_user_id, message),
+                            )
+                        else:
+                            response = SendMessageResponse(
+                                chat_id=user.telegram_user_id,
+                                text=message.text,
+                                reply_markup=message.reply_markup,
+                            )
+                            await container.chat_message_service.add(
+                                user.telegram_user_id,
+                                MessageDirect.OUT,
+                                message.text,
+                            )
                 elif created.created:
                     await container.event_service.publish(
                         emit_telegram(user.telegram_user_id, WELCOME),
@@ -113,6 +129,15 @@ async def hook(
                                 ),
                             )
                         case UserIntent.ADD_WORDS:
+                            response = SendMessageResponse(
+                                chat_id=user.telegram_user_id,
+                                text=ADD_WORDS_ACCEPTED_TEXT,
+                            )
+                            await container.chat_message_service.add(
+                                user.telegram_user_id,
+                                MessageDirect.OUT,
+                                ADD_WORDS_ACCEPTED_TEXT,
+                            )
                             await container.event_service.publish(
                                 emit_add_words(
                                     user.telegram_user_id,
@@ -128,13 +153,18 @@ async def hook(
                                     text,
                                 ),
                             )
-                        case _:
-                            fallback(text)
-        if isinstance(response, JSONResponse):
+                        case UserIntent.UNKNOWN:
+                            await container.event_service.publish(
+                                emit_translate(
+                                    user.telegram_user_id,
+                                    user.version,
+                                    text,
+                                ),
+                            )
+        if isinstance(response, TelegramMethodResponse):
             logger.info(
-                "Ответ %s %s",
-                response.status_code,
-                response.body.decode(),
+                "Ответ 200 %s",
+                response.model_dump(mode="json", exclude_none=True),
             )
         else:
             logger.info("Ответ %s", response.status_code)
