@@ -9,6 +9,7 @@ from time import perf_counter
 from typing import TypeVar
 from zoneinfo import available_timezones
 
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
 from app.llm import (
@@ -17,6 +18,7 @@ from app.llm import (
     LLMProvider,
     LLMRateLimitError,
     LLMResponseError,
+    LLMToolCall,
     LLMUnavailableError,
 )
 from app.schemas.llm import TranslationVerdict, VerdictReview
@@ -182,6 +184,47 @@ class LanguageModelService:
                 raise
             elapsed_ms = int((perf_counter() - started) * 1000)
             logger.info("Ответ %s мс %s", elapsed_ms, result.model_dump())
+            return result
+
+    async def select_tool(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: Sequence[BaseTool],
+    ) -> list[LLMToolCall]:
+        attempt = 0
+        while True:
+            started = perf_counter()
+            logger.info(
+                "Запрос tool %s",
+                [
+                    {"role": message.role, "content": message.content}
+                    for message in messages
+                ],
+            )
+            try:
+                result = await self._llm.select_tool(messages, tools)
+            except LLMRateLimitError:
+                if attempt == self._rate_limit_retries:
+                    logger.exception("Исчерпан лимит запросов к модели")
+                    raise
+                attempt += 1
+                logger.warning("Лимит модели, повтор %s", attempt)
+                await asyncio.sleep(
+                    random.uniform(1, self._rate_limit_max_delay_seconds)
+                )
+                continue
+            except Exception:
+                logger.exception("Ошибка модели")
+                raise
+            elapsed_ms = int((perf_counter() - started) * 1000)
+            if not result:
+                logger.info("Ответ %s мс без вызова", elapsed_ms)
+            else:
+                logger.info(
+                    "Ответ %s мс %s",
+                    elapsed_ms,
+                    [call.model_dump() for call in result],
+                )
             return result
 
     async def build_question_text(

@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -11,3 +11,10 @@ class LLMMessage(BaseModel):
 
     role: LLMRole
     content: str
+
+
+class LLMToolCall(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    args: dict[str, Any]

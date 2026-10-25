@@ -6,7 +6,7 @@ from .exceptions import (
     LLMUnavailableError,
 )
 from .provider import LLMProvider
-from .types import LLMMessage, LLMRole
+from .types import LLMMessage, LLMRole, LLMToolCall
 
 __all__ = (
     "LLMError",
@@ -16,5 +16,6 @@ __all__ = (
     "LLMResponseError",
     "LLMRole",
     "LLMTimeoutError",
+    "LLMToolCall",
     "LLMUnavailableError",
 )

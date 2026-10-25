@@ -11,11 +11,11 @@ from app.events.tasks import (
     emit_add_words,
     emit_answer,
     emit_dont_know,
+    emit_free_text,
     emit_setup_schedule,
     emit_study,
     emit_telegram,
     emit_timezone,
-    emit_translate,
 )
 from app.schemas import (
     AnswerCallbackQueryResponse,
@@ -27,7 +27,6 @@ from app.telegram import TelegramCommand
 from app.telegram.reply import WELCOME
 from app.telegram.texts import ADD_WORDS_ACCEPTED_TEXT
 
-_INCOMING_PATH = Path("telegram.txt")
 
 logger = logging.getLogger("app.hook")
 
@@ -155,7 +154,7 @@ async def hook(
                             )
                         case UserIntent.UNKNOWN:
                             await container.event_service.publish(
-                                emit_translate(
+                                emit_free_text(
                                     user.telegram_user_id,
                                     user.version,
                                     text,

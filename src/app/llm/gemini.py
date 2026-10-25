@@ -4,6 +4,8 @@ from typing import TypeVar
 import httpx
 from google.genai.errors import APIError
 from langchain_core.exceptions import OutputParserException
+from langchain_core.messages import AIMessage
+from langchain_core.tools import BaseTool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_google_genai.chat_models import (
     ChatGoogleGenerativeAIError,
@@ -20,7 +22,7 @@ from .exceptions import (
     is_unavailable,
 )
 from .messages import to_langchain_messages
-from .types import LLMMessage
+from .types import LLMMessage, LLMToolCall
 
 
 ResponseT = TypeVar("ResponseT", bound=BaseModel)
@@ -73,3 +75,37 @@ class GeminiProvider:
         if not isinstance(result, response_model):
             raise LLMResponseError("Модель вернула ответ неверной схемы")
         return result
+
+    async def select_tool(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: Sequence[BaseTool],
+    ) -> list[LLMToolCall]:
+        bound = self._model.bind_tools(list(tools))
+        try:
+            result = await bound.ainvoke(to_langchain_messages(messages))
+        except (httpx.TimeoutException, TimeoutError) as error:
+            raise LLMTimeoutError(str(error)) from error
+        except (
+            ConnectionError,
+            httpx.HTTPError,
+            APIError,
+            ChatGoogleGenerativeAIError,
+        ) as error:
+            if isinstance(error, GoogleRateLimitError) or is_rate_limited(error):
+                raise LLMRateLimitError(str(error)) from error
+            raise LLMUnavailableError(str(error)) from error
+        except (OutputParserException, ValidationError) as error:
+            if is_unavailable(error):
+                raise LLMUnavailableError(str(error)) from error
+            raise LLMResponseError(str(error)) from error
+        if not isinstance(result, AIMessage):
+            raise LLMResponseError("Модель вернула ответ неверной схемы")
+        calls: list[LLMToolCall] = []
+        for call in result.tool_calls:
+            name = call.get("name")
+            args = call.get("args")
+            if not isinstance(name, str) or name == "" or not isinstance(args, dict):
+                raise LLMResponseError("Модель вернула вызов инструмента неверной схемы")
+            calls.append(LLMToolCall(name=name, args=args))
+        return calls

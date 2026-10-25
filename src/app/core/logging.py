@@ -4,6 +4,7 @@ import logging.config
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
+from .config import get_config
 
 
 user_telegram_id: ContextVar[int | None] = ContextVar(
@@ -40,6 +41,7 @@ class JsonFormatter(logging.Formatter):
 
 
 def logging_dict() -> dict[str, Any]:
+    config = get_config()
     return {
         "version": 1,
         "disable_existing_loggers": False,
@@ -70,7 +72,7 @@ def logging_dict() -> dict[str, Any]:
                 "level": "WARNING",
             },
             "uvicorn.access": {
-                "level": "WARNING",
+                "level": "INFO" if config.debug else "WARNING",
             },
         },
     }

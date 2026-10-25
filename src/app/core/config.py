@@ -23,6 +23,7 @@ class AppSettings(BaseSettings):
     session_duration_minutes: int = Field(default=15, ge=1)
     chat_message_retention_days: int = Field(default=7, ge=1)
     word_add_batch_retention_hours: int = Field(default=1, ge=1)
+    input_max_length: int = Field(default=256, ge=1)
 
     # RabbitMQ
     rabbitmq_url: str = Field(..., env="RABBITMQ_URL")
