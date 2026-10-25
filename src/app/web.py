@@ -1,15 +1,19 @@
+import logging
 import secrets
 import sys
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 
 from app.core.container import get_context_container
 from app.core.disposer import dispose
 from app.core.logging import logging_dict
 from app.defs import HOOK_PATH
 from app.routes.hook import router as hook_router
+
+logger = logging.getLogger("app.web")
 
 
 @asynccontextmanager
@@ -35,6 +39,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(hook_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def log_invalid_request(request: Request, exc: RequestValidationError):
+    logger.warning(
+        "Невалидный запрос %s: %s; тело: %s",
+        request.url.path,
+        exc.errors(),
+        exc.body,
+    )
+    return Response(status_code=200)
 
 
 def main() -> None:
