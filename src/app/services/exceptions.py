@@ -33,6 +33,11 @@ class UserVersionError(Exception):
         super().__init__("Версия пользователя устарела.")
 
 
+class UserBusyError(Exception):
+    def __init__(self) -> None:
+        super().__init__("Пользователь занят.")
+
+
 class TelegramSendError(Exception):
     def __init__(self) -> None:
         super().__init__("Не удалось отправить сообщение в Telegram.")

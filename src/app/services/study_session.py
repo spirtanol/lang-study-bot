@@ -3,12 +3,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from app.defs import (
-    StartSessionResult,
-    StudyAttemptStatus,
-    StudySessionStatus,
-    UserIntent,
-)
+from app.defs import StartSessionResult, StudyAttemptStatus, StudySessionStatus
 from app.graphs import AnswerCheckGraph
 from app.llm import LLMError, LLMUnavailableError
 from app.models import StudyAttempt, StudySession, User
@@ -19,7 +14,6 @@ from app.repositories import (
     StudyAttemptAlreadyExistsError,
     StudyAttemptRepository,
     StudySessionRepository,
-    UserRepository,
     VocabularyItemRepository,
 )
 from app.telegram.texts import (
@@ -66,6 +60,7 @@ class ReplyOutcome:
     text: str
     question: AskTranslation | None = None
     suggest_add_words: bool = False
+    session_ended: bool = False
 
 
 def _normalize_answer(text: str) -> str:
@@ -126,7 +121,6 @@ class StudySessionService:
         repository: StudySessionRepository,
         vocabulary_items: VocabularyItemRepository,
         study_attempts: StudyAttemptRepository,
-        users: UserRepository,
         language_model: LanguageModelService,
         answer_check: AnswerCheckGraph,
         transaction: Callable[[], AbstractAsyncContextManager[None]],
@@ -135,7 +129,6 @@ class StudySessionService:
         self._repository = repository
         self._vocabulary_items = vocabulary_items
         self._study_attempts = study_attempts
-        self._users = users
         self._language_model = language_model
         self._answer_check = answer_check
         self._transaction = transaction
@@ -202,8 +195,6 @@ class StudySessionService:
 
             pending = await self._ask_pending(active_session.id)
             if pending is not None:
-                user.intent = UserIntent.ANSWER
-                await self._users.save(user)
                 return pending
 
             active_session.status = StudySessionStatus.IN_PROGRESS
@@ -237,14 +228,10 @@ class StudySessionService:
                             question_text=question_text,
                         )
                     )
-                    user.intent = UserIntent.ANSWER
-                    await self._users.save(user)
             except StudyAttemptAlreadyExistsError:
                 async with self._transaction():
                     pending = await self._ask_pending(session_id)
                     if pending is not None:
-                        user.intent = UserIntent.ANSWER
-                        await self._users.save(user)
                         return pending
                 attempt_number += 1
                 if attempt_number >= QUESTION_PICK_ATTEMPTS:
@@ -353,9 +340,7 @@ class StudySessionService:
                 counts = await self._study_attempts.count_results(active_session.id)
                 reply = _interrupted_text(counts)
             await self._repository.interrupt(active_session.id)
-            user.intent = UserIntent.UNKNOWN
-            await self._users.save(user)
-        return ReplyOutcome(reply)
+        return ReplyOutcome(reply, session_ended=True)
 
     async def _continue_after_answer(
         self,
@@ -381,9 +366,10 @@ class StudySessionService:
         async with self._transaction():
             counts = await self._study_attempts.count_results(pending.session_id)
             await self._repository.complete(pending.session_id)
-            user.intent = UserIntent.UNKNOWN
-            await self._users.save(user)
-        return ReplyOutcome(_finish_text(feedback, counts, finished))
+        return ReplyOutcome(
+            _finish_text(feedback, counts, finished),
+            session_ended=True,
+        )
 
     async def _ask_pending(self, session_id: int) -> AskTranslation | None:
         pending = await self._study_attempts.get_pending(session_id)

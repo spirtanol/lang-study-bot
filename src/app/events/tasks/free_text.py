@@ -13,7 +13,7 @@ from app.events.tasks.free_text_tools import (
 )
 from app.events.tasks.telegram import emit_telegram
 from app.llm import LLMError, LLMMessage, LLMUnavailableError
-from app.services.exceptions import UserVersionError
+from app.services.exceptions import UserBusyError, UserVersionError
 from app.telegram import TelegramMessage
 from app.telegram.texts import (
     MODEL_UNAVAILABLE_TEXT,
@@ -49,34 +49,6 @@ async def _handle(
 ) -> None:
     container = context.state.container
 
-    async def is_current() -> bool:
-        async with container.transaction():
-            current = await container.user_repository.lock_for_version(
-                user_id,
-                version,
-            )
-            return current is not None
-
-    if not await is_current():
-        return
-
-    async def publish_if_current(message_text: str) -> None:
-        async with container.transaction():
-            current = await container.user_repository.lock_for_version(
-                user_id,
-                version,
-            )
-            if current is None:
-                return
-            await container.event_service.publish(
-                emit_telegram(user_id, TelegramMessage(text=message_text)),
-            )
-
-    limit = container.config.input_max_length
-    if len(text) > limit:
-        await publish_if_current(TEXT_TOO_LONG_TEXT.format(limit=limit))
-        return
-
     async def publish(message: TelegramMessage) -> None:
         await container.event_service.publish(emit_telegram(user_id, message))
 
@@ -90,37 +62,49 @@ async def _handle(
     ]
     tools_by_name = {item.name: item for item in tools}
     try:
-        calls = await container.language_model_service.select_tool(
-            (
-                LLMMessage(role="system", content=TEXT_ACTION_SYSTEM_PROMPT),
-                LLMMessage(role="user", content=text),
-            ),
-            tools,
-        )
-    except LLMUnavailableError:
-        await publish_if_current(MODEL_UNAVAILABLE_TEXT)
-        return
-    except LLMError:
-        await publish_if_current(TEXT_ACTION_FAILED_TEXT)
-        return
+        async with container.user_service.lock(user_id, version):
+            limit = container.config.input_max_length
+            if len(text) > limit:
+                await publish(
+                    TelegramMessage(text=TEXT_TOO_LONG_TEXT.format(limit=limit)),
+                )
+                return
 
-    call = calls[0] if calls else None
-    selected = None if call is None else tools_by_name.get(call.name)
-    if call is None or selected is None:
-        await publish_if_current(TEXT_ACTION_FAILED_TEXT)
-        return
-    try:
-        await selected.ainvoke(call.args)
+            try:
+                calls = await container.language_model_service.select_tool(
+                    (
+                        LLMMessage(role="system", content=TEXT_ACTION_SYSTEM_PROMPT),
+                        LLMMessage(role="user", content=text),
+                    ),
+                    tools,
+                )
+            except LLMUnavailableError:
+                await publish(TelegramMessage(text=MODEL_UNAVAILABLE_TEXT))
+                return
+            except LLMError:
+                await publish(TelegramMessage(text=TEXT_ACTION_FAILED_TEXT))
+                return
+
+            call = calls[0] if calls else None
+            selected = None if call is None else tools_by_name.get(call.name)
+            if call is None or selected is None:
+                await publish(TelegramMessage(text=TEXT_ACTION_FAILED_TEXT))
+                return
+            try:
+                await selected.ainvoke(call.args)
+            except ValidationError:
+                await publish(TelegramMessage(text=TEXT_ACTION_FAILED_TEXT))
+                return
     except UserVersionError:
-        return
-    except ValidationError:
-        await publish_if_current(TEXT_ACTION_FAILED_TEXT)
         return
 
 
 _task: AsyncTaskiqDecoratedTask = get_brokers().common_broker.register_task(
     _handle,
     task_name="free_text",
+    retry_on_error=True,
+    max_retries=8,
+    types_of_exceptions=(UserBusyError,),
 )
 
 

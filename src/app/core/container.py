@@ -7,7 +7,7 @@ from typing import assert_never
 
 from app.core.config import AppSettings, get_config
 from app.core.db import AsyncSession, get_engine, get_session_maker
-from app.defs import LEASE
+from app.defs import LEASE, USER_LOCK_LEASE
 from app.graphs import AddWordsGraph, AnswerCheckGraph
 from app.llm import LLMProvider
 from app.repositories import (
@@ -66,6 +66,7 @@ class Container:
             attempts=self.study_attempt_repository,
             transaction=self.transaction,
             session_timeout=timedelta(minutes=self.config.session_timeout_minutes),
+            lock_lease=USER_LOCK_LEASE,
         )
 
     @cached_property
@@ -76,7 +77,6 @@ class Container:
     def study_schedule_service(self) -> StudyScheduleService:
         return StudyScheduleService(
             repository=self.study_schedule_slot_repository,
-            users=self.user_repository,
             user_service=self.user_service,
             transaction=self.transaction,
             slot_gap_minutes=self.config.schedule_slot_gap_minutes,
@@ -181,7 +181,6 @@ class Container:
             repository=self.study_session_repository,
             vocabulary_items=self.vocabulary_item_repository,
             study_attempts=self.study_attempt_repository,
-            users=self.user_repository,
             language_model=self.language_model_service,
             answer_check=self.answer_check_graph,
             transaction=self.transaction,

@@ -10,6 +10,7 @@ from app.defs import HOOK_PATH, UserIntent, MessageDirect
 from app.events.tasks import (
     emit_add_words,
     emit_answer,
+    emit_command,
     emit_dont_know,
     emit_free_text,
     emit_setup_schedule,
@@ -23,6 +24,7 @@ from app.schemas import (
     SendMessageResponse,
     TelegramMethodResponse,
 )
+from app.services.exceptions import UserBusyError, UserVersionError
 from app.telegram import TelegramCommand
 from app.telegram.reply import WELCOME
 from app.telegram.texts import ADD_WORDS_ACCEPTED_TEXT
@@ -65,6 +67,7 @@ async def hook(
         await container.chat_message_service.add(update.user_id, MessageDirect.IN, text)
 
         accepted = await container.telegram_update_service.add_update(update.update_id)
+        inline_command: str | None = None
         if accepted:
             async with container.transaction():
                 created = await container.user_service.get_or_create(update.user_id)
@@ -85,26 +88,7 @@ async def hook(
                         emit_study(user.telegram_user_id, user.version),
                     )
                 elif command is not None:
-                    message = await container.user_reply_service.handle_command(
-                        user.telegram_user_id,
-                        command,
-                    )
-                    if message is not None:
-                        if update.callback_query is not None:
-                            await container.event_service.publish(
-                                emit_telegram(user.telegram_user_id, message),
-                            )
-                        else:
-                            response = SendMessageResponse(
-                                chat_id=user.telegram_user_id,
-                                text=message.text,
-                                reply_markup=message.reply_markup,
-                            )
-                            await container.chat_message_service.add(
-                                user.telegram_user_id,
-                                MessageDirect.OUT,
-                                message.text,
-                            )
+                    inline_command = command
                 elif created.created:
                     await container.event_service.publish(
                         emit_telegram(user.telegram_user_id, WELCOME),
@@ -160,6 +144,36 @@ async def hook(
                                     text,
                                 ),
                             )
+            if inline_command is not None:
+                try:
+                    message = await container.user_reply_service.handle_command(
+                        user.telegram_user_id,
+                        inline_command,
+                        user.version,
+                    )
+                except UserBusyError:
+                    await container.event_service.publish(
+                        emit_command(user.telegram_user_id, inline_command),
+                    )
+                    message = None
+                except UserVersionError:
+                    message = None
+                if message is not None:
+                    if update.callback_query is not None:
+                        await container.event_service.publish(
+                            emit_telegram(user.telegram_user_id, message),
+                        )
+                    else:
+                        response = SendMessageResponse(
+                            chat_id=user.telegram_user_id,
+                            text=message.text,
+                            reply_markup=message.reply_markup,
+                        )
+                        await container.chat_message_service.add(
+                            user.telegram_user_id,
+                            MessageDirect.OUT,
+                            message.text,
+                        )
         if isinstance(response, TelegramMethodResponse):
             logger.info(
                 "Ответ 200 %s",

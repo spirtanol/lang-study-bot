@@ -1,4 +1,4 @@
-from taskiq import SimpleRetryMiddleware, TaskiqEvents, TaskiqState
+from taskiq import SmartRetryMiddleware, TaskiqEvents, TaskiqState
 from taskiq_aio_pika import AioPikaBroker
 
 from app.core.config import get_config
@@ -23,7 +23,11 @@ def worker_common_broker() -> AioPikaBroker:
     return (
         get_brokers().common_broker
         .with_middlewares(
-            SimpleRetryMiddleware(default_retry_count=3),
+            SmartRetryMiddleware(
+                default_retry_count=3,
+                use_delay_exponent=True,
+                max_delay_exponent=60,
+            ),
             UserContextMiddleware(),
         )
         .with_event_handlers(TaskiqEvents.WORKER_STARTUP, _startup)
@@ -35,7 +39,11 @@ def worker_telegram_broker() -> AioPikaBroker:
     return (
         get_brokers().telegram_broker
         .with_middlewares(
-            SimpleRetryMiddleware(default_retry_count=3),
+            SmartRetryMiddleware(
+                default_retry_count=3,
+                use_delay_exponent=True,
+                max_delay_exponent=60,
+            ),
             UserContextMiddleware(),
         )
         .with_event_handlers(TaskiqEvents.WORKER_STARTUP, _startup)

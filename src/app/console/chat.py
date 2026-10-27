@@ -4,7 +4,11 @@ import typer
 
 from app.core.container import get_context_container
 from app.defs import UserIntent
-from app.services.exceptions import PendingQuestionNotFoundError, UserVersionError
+from app.services.exceptions import (
+    PendingQuestionNotFoundError,
+    UserBusyError,
+    UserVersionError,
+)
 from app.telegram.command import TELEGRAM_COMMAND_DESCRIPTIONS
 from app.telegram.texts import QUESTION_TEXT
 
@@ -107,7 +111,7 @@ async def _run_chat() -> None:
                             ):
                                 lines.append(f"/{command} — {description}")
                             shown = "\n".join(lines)
-            except (PendingQuestionNotFoundError, UserVersionError):
+            except (PendingQuestionNotFoundError, UserBusyError, UserVersionError):
                 continue
 
             if shown:

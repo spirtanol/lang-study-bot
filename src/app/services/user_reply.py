@@ -117,7 +117,7 @@ class UserReplyService:
         self,
         user_id: int,
         command: str,
-        version: int | None = None,
+        version: int,
     ) -> TelegramMessage | None:
         name, _, params = command.partition(":")
         if name == TelegramCommand.ADD_BATCH:
@@ -134,67 +134,73 @@ class UserReplyService:
         if name not in _LOCKED_COMMANDS:
             return None
 
-        async with self._transaction():
-            user = await self._users.lock_user(user_id)
-            if user is None:
-                return None
-            match name:
-                case TelegramCommand.SCHEDULE:
-                    slots = await self._schedule.get_schedule(user_id)
-                    return TelegramMessage(
-                        text=_schedule_text(user.timezone, slots, SCHEDULE_DAILY),
-                    )
-                case TelegramCommand.SETUP_SCHEDULE:
-                    user.intent = UserIntent.SCHEDULE
-                    await self._users.save(user)
-                    return TelegramMessage(
-                        text=SCHEDULE_TIME_PROMPT,
-                        reply_markup=CANCEL_MARKUP,
-                    )
-                case TelegramCommand.CLEAR_SCHEDULE:
-                    await self._schedule.clear(user_id)
-                    return TelegramMessage(text=SCHEDULE_CLEARED_TEXT)
-                case TelegramCommand.TIMEZONE:
-                    user.intent = UserIntent.TIMEZONE
-                    await self._users.save(user)
-                    return TelegramMessage(
-                        text=TIMEZONE_PROMPT,
-                        reply_markup=CANCEL_MARKUP,
-                    )
-                case TelegramCommand.CANCEL:
-                    active_session = await self._sessions.get_latest_active(user_id)
-                    pending = None
-                    if active_session is not None:
-                        pending = await self._attempts.get_pending(active_session.id)
-                    if pending is None:
-                        user.intent = UserIntent.UNKNOWN
-                    else:
-                        user.intent = UserIntent.ANSWER
-                    await self._users.save(user)
-                    return TelegramMessage(text=CANCELLED_TEXT)
-                case TelegramCommand.ADD_WORDS:
-                    user.intent = UserIntent.ADD_WORDS
-                    await self._users.save(user)
-                    return TelegramMessage(
-                        text=ADD_WORDS_PROMPT,
-                        reply_markup=CANCEL_MARKUP,
-                    )
-                case TelegramCommand.FINISH:
-                    outcome = await self._study_sessions.interrupt(user)
-                    return TelegramMessage(text=outcome.text)
-                case TelegramCommand.STUDY:
-                    user.intent = UserIntent.STUDY
-                    await self._users.save(user)
-                case TelegramCommand.DONT_KNOW:
-                    pass
-                case _:
-                    return None
-        match name:
-            case TelegramCommand.STUDY:
-                reply = await self._start_study(user)
-            case TelegramCommand.DONT_KNOW:
+        async with self._user_service.lock(user_id, version):
+            if name == TelegramCommand.STUDY:
+                reply = await self._start_study(user_id, version)
+            elif name == TelegramCommand.DONT_KNOW:
                 reply = await self.handle_skip(user_id, version)
-            case _:
+            else:
+                async with self._transaction():
+                    current = await self._users.get_by_id(user_id)
+                    if current is None:
+                        return None
+                    match name:
+                        case TelegramCommand.SCHEDULE:
+                            slots = await self._schedule.get_schedule(user_id)
+                            return TelegramMessage(
+                                text=_schedule_text(
+                                    current.timezone,
+                                    slots,
+                                    SCHEDULE_DAILY,
+                                ),
+                            )
+                        case TelegramCommand.SETUP_SCHEDULE:
+                            current.intent = UserIntent.SCHEDULE
+                            await self._users.save(current)
+                            return TelegramMessage(
+                                text=SCHEDULE_TIME_PROMPT,
+                                reply_markup=CANCEL_MARKUP,
+                            )
+                        case TelegramCommand.CLEAR_SCHEDULE:
+                            await self._schedule.clear(user_id)
+                            return TelegramMessage(text=SCHEDULE_CLEARED_TEXT)
+                        case TelegramCommand.TIMEZONE:
+                            current.intent = UserIntent.TIMEZONE
+                            await self._users.save(current)
+                            return TelegramMessage(
+                                text=TIMEZONE_PROMPT,
+                                reply_markup=CANCEL_MARKUP,
+                            )
+                        case TelegramCommand.CANCEL:
+                            active_session = await self._sessions.get_latest_active(
+                                user_id,
+                            )
+                            pending = None
+                            if active_session is not None:
+                                pending = await self._attempts.get_pending(
+                                    active_session.id,
+                                )
+                            if pending is None:
+                                current.intent = UserIntent.UNKNOWN
+                            else:
+                                current.intent = UserIntent.ANSWER
+                            await self._users.save(current)
+                            return TelegramMessage(text=CANCELLED_TEXT)
+                        case TelegramCommand.ADD_WORDS:
+                            current.intent = UserIntent.ADD_WORDS
+                            await self._users.save(current)
+                            return TelegramMessage(
+                                text=ADD_WORDS_PROMPT,
+                                reply_markup=CANCEL_MARKUP,
+                            )
+                        case TelegramCommand.FINISH:
+                            outcome = await self._study_sessions.interrupt(current)
+                            if outcome.session_ended:
+                                current.intent = UserIntent.UNKNOWN
+                                await self._users.save(current)
+                            return TelegramMessage(text=outcome.text)
+                        case _:
+                            return None
                 return None
         parts: list[str] = []
         reply_markup = None
@@ -227,44 +233,39 @@ class UserReplyService:
         version: int,
         text: str,
     ) -> TelegramMessage | None:
-        if not await self._has_version(user_id, version):
-            raise UserVersionError
-
-        try:
-            is_list = await self._language_model.is_word_list(text)
-        except LLMUnavailableError:
-            return await self._unavailable_reply(user_id, version)
-        except LLMError:
-            return None
-        if not is_list:
-            return None
-
-        accepted: list[Word] = []
-        seen: set[int] = set()
-        for word_text in _split_words(text):
+        async with self._user_service.lock(user_id, version):
             try:
-                word = await self._words.get_or_create(word_text)
-            except WordNotAdded:
-                continue
+                is_list = await self._language_model.is_word_list(text)
             except LLMUnavailableError:
-                return await self._unavailable_reply(user_id, version)
+                return TelegramMessage(text=MODEL_UNAVAILABLE_TEXT)
             except LLMError:
-                continue
-            if word.id in seen:
-                continue
-            seen.add(word.id)
-            accepted.append(word)
-        if not accepted:
-            return None
+                return None
+            if not is_list:
+                return None
 
-        batch_id = await self._batches.add([word.id for word in accepted])
-        if not await self._has_version(user_id, version):
-            await self._batches.remove_batch(batch_id)
-            raise UserVersionError
-        return TelegramMessage(
-            text=_word_translation_lines(accepted),
-            reply_markup=add_batch_markup(batch_id),
-        )
+            accepted: list[Word] = []
+            seen: set[int] = set()
+            for word_text in _split_words(text):
+                try:
+                    word = await self._words.get_or_create(word_text)
+                except WordNotAdded:
+                    continue
+                except LLMUnavailableError:
+                    return TelegramMessage(text=MODEL_UNAVAILABLE_TEXT)
+                except LLMError:
+                    continue
+                if word.id in seen:
+                    continue
+                seen.add(word.id)
+                accepted.append(word)
+            if not accepted:
+                return None
+
+            batch_id = await self._batches.add([word.id for word in accepted])
+            return TelegramMessage(
+                text=_word_translation_lines(accepted),
+                reply_markup=add_batch_markup(batch_id),
+            )
 
     async def _add_batch(self, user_id: int, batch: str) -> TelegramMessage:
         try:
@@ -278,24 +279,10 @@ class UserReplyService:
         await self._batches.remove_batch(batch_id)
         return TelegramMessage(text=WORDS_ADDED_TEXT)
 
-    async def _has_version(self, user_id: int, version: int) -> bool:
-        async with self._transaction():
-            user = await self._users.lock_for_version(user_id, version)
-            return user is not None
-
-    async def _unavailable_reply(
-        self,
-        user_id: int,
-        version: int,
-    ) -> TelegramMessage:
-        if not await self._has_version(user_id, version):
-            raise UserVersionError
-        return TelegramMessage(text=MODEL_UNAVAILABLE_TEXT)
-
     async def handle_add_words(
         self,
         user_id: int,
-        version: int | None,
+        version: int,
         text: str,
     ) -> ReplyOutcome:
         words = _split_words(text)
@@ -306,29 +293,24 @@ class UserReplyService:
         rejected: list[tuple[str, str]] = []
         pending: PendingQuestion | None = None
         try:
-            for word in words:
-                try:
-                    added.append(await self._vocabulary.add_item(user_id, word))
-                except WordNotAdded as error:
-                    rejected.append((word, error.reason))
+            async with self._user_service.lock(user_id, version) as user:
+                for word in words:
+                    try:
+                        added.append(await self._vocabulary.add_item(user_id, word))
+                    except WordNotAdded as error:
+                        rejected.append((word, error.reason))
 
-            async with self._transaction():
-                user = await self._users.lock_for_version(user_id, version) if version is not None else await self._users.lock_user(user_id)
-                if user is None:
-                    raise UserVersionError
-
-                active_session = await self._sessions.get_latest_active(
-                    user.telegram_user_id,
-                )
-                if active_session is not None:
-                    pending = await self._attempts.get_pending(active_session.id)
-                if pending is None:
-                    user.intent = UserIntent.UNKNOWN
-                else:
-                    user.intent = UserIntent.ANSWER
-                if version is not None:
-                    user.version += 1
-                await self._users.save(user)
+                async with self._transaction():
+                    active_session = await self._sessions.get_latest_active(
+                        user.telegram_user_id,
+                    )
+                    if active_session is not None:
+                        pending = await self._attempts.get_pending(active_session.id)
+                    if pending is None:
+                        user.intent = UserIntent.UNKNOWN
+                    else:
+                        user.intent = UserIntent.ANSWER
+                    await self._users.save(user)
         except LLMUnavailableError:
             return ReplyOutcome(MODEL_UNAVAILABLE_TEXT)
         except LLMError:
@@ -338,66 +320,62 @@ class UserReplyService:
     async def handle_answer(
         self,
         user_id: int,
-        version: int | None,
+        version: int,
         text: str,
     ) -> ReplyOutcome:
-        async with self._transaction():
-            user = (
-                await self._users.lock_for_version(user_id, version)
-                if version is not None
-                else await self._users.lock_user(user_id)
-            )
-            if user is None:
-                raise UserVersionError
-
+        async with self._user_service.lock(user_id, version) as user:
             pending = await self._pending_question(user)
             if pending is None:
                 raise PendingQuestionNotFoundError
-
-        outcome = await self._study_sessions.answer_pending(user, pending, text)
-        if outcome.text in {CHECK_FAILED_TEXT, MODEL_UNAVAILABLE_TEXT}:
-            return outcome
-        if version is not None:
+            outcome = await self._study_sessions.answer_pending(user, pending, text)
+            if outcome.text in {CHECK_FAILED_TEXT, MODEL_UNAVAILABLE_TEXT}:
+                return outcome
             async with self._transaction():
+                if outcome.question is not None:
+                    user.intent = UserIntent.ANSWER
+                    await self._users.save(user)
+                elif outcome.session_ended:
+                    user.intent = UserIntent.UNKNOWN
+                    await self._users.save(user)
                 if not await self._users.bump_version(user_id, version):
                     raise UserVersionError
-        return outcome
+            return outcome
 
     async def handle_schedule(
         self,
         user_id: int,
-        version: int | None,
+        version: int,
         text: str,
     ) -> ReplyOutcome:
         answer = text.strip()
         if not answer:
             return ReplyOutcome(SCHEDULE_TIME_PROMPT)
+        pending = None
         try:
-            local_time = await self._language_model.parse_clock_time(answer)
+            async with self._user_service.lock(user_id, version) as user:
+                local_time = await self._language_model.parse_clock_time(answer)
+                if local_time is None:
+                    return ReplyOutcome(SCHEDULE_TIME_PROMPT)
+                async with self._transaction():
+                    await self._schedule.set_daily(user_id, local_time)
+                    current = await self._users.get_by_id(user_id)
+                    if current is None:
+                        raise UserVersionError
+                    active_session = await self._sessions.get_latest_active(
+                        current.telegram_user_id,
+                    )
+                    if active_session is None:
+                        current.intent = UserIntent.UNKNOWN
+                    else:
+                        current.intent = UserIntent.ANSWER
+                        pending = await self._attempts.get_pending(
+                            active_session.id,
+                        )
+                    await self._users.save(current)
         except LLMUnavailableError:
             return ReplyOutcome(MODEL_UNAVAILABLE_TEXT)
         except LLMError:
             return ReplyOutcome(SCHEDULE_PARSE_FAILED_TEXT)
-        if local_time is None:
-            return ReplyOutcome(SCHEDULE_TIME_PROMPT)
-
-        async with self._transaction():
-            user = await self._users.lock_for_version(user_id, version) if version is not None else await self._users.lock_user(user_id)
-            if user is None:
-                raise UserVersionError
-            await self._schedule.set_daily(user_id, local_time)
-            active_session = await self._sessions.get_latest_active(
-                user.telegram_user_id,
-            )
-            pending = None
-            if active_session is None:
-                user.intent = UserIntent.UNKNOWN
-            else:
-                user.intent = UserIntent.ANSWER
-                pending = await self._attempts.get_pending(active_session.id)
-            if version is not None:
-                user.version += 1
-            await self._users.save(user)
         shown = await self.show_schedule(user)
         return ReplyOutcome(
             f"{SCHEDULE_CHANGED_TEXT}\n{shown.text}",
@@ -407,103 +385,104 @@ class UserReplyService:
     async def handle_timezone(
         self,
         user_id: int,
-        version: int | None,
+        version: int,
         text: str,
     ) -> ReplyOutcome:
         answer = text.strip()
         if not answer:
             return ReplyOutcome(TIMEZONE_PROMPT)
+        pending = None
         try:
-            zone = await self._language_model.resolve_timezone(answer)
+            async with self._user_service.lock(user_id, version):
+                zone = await self._language_model.resolve_timezone(answer)
+                if zone is None:
+                    return ReplyOutcome(TIMEZONE_PARSE_FAILED_TEXT)
+                async with self._transaction():
+                    current = await self._users.get_by_id(user_id)
+                    if current is None:
+                        raise UserVersionError
+                    current.timezone = zone
+                    active_session = await self._sessions.get_latest_active(
+                        current.telegram_user_id,
+                    )
+                    if active_session is not None:
+                        pending = await self._attempts.get_pending(
+                            active_session.id,
+                        )
+                    if pending is None:
+                        current.intent = UserIntent.UNKNOWN
+                    else:
+                        current.intent = UserIntent.ANSWER
+                    await self._users.save(current)
+                    await self._user_service.refresh_next_run(user_id)
         except LLMUnavailableError:
             return ReplyOutcome(MODEL_UNAVAILABLE_TEXT)
         except LLMError:
             return ReplyOutcome(TIMEZONE_PARSE_FAILED_TEXT)
-        if zone is None:
-            return ReplyOutcome(TIMEZONE_PARSE_FAILED_TEXT)
-
-        async with self._transaction():
-            user = (
-                await self._users.lock_for_version(user_id, version)
-                if version is not None
-                else await self._users.lock_user(user_id)
-            )
-            if user is None:
-                raise UserVersionError
-            user.timezone = zone
-            active_session = await self._sessions.get_latest_active(
-                user.telegram_user_id,
-            )
-            pending = None
-            if active_session is not None:
-                pending = await self._attempts.get_pending(active_session.id)
-            if pending is None:
-                user.intent = UserIntent.UNKNOWN
-            else:
-                user.intent = UserIntent.ANSWER
-            if version is not None:
-                user.version += 1
-            await self._users.save(user)
-            await self._user_service.refresh_next_run(user_id)
         return ReplyOutcome(
             f"{TIMEZONE_SET_TEXT} {zone}.",
             _pending_ask(pending),
         )
 
-    async def _start_study(self, user: User) -> ReplyOutcome:
-        try:
-            outcome = await self._study_sessions.start_session(user)
-        except NoStudyWordsError:
-            return ReplyOutcome(NO_STUDY_WORDS_TEXT, suggest_add_words=True)
-        match outcome.result:
-            case StartSessionResult.NOT_NOW:
-                return ReplyOutcome(outcome.text)
-            case StartSessionResult.READY:
-                already_ready = False
-            case StartSessionResult.ALREADY_READY:
-                already_ready = True
-            case _ as unexpected:
-                assert_never(unexpected)
+    async def _start_study(self, user_id: int, version: int) -> ReplyOutcome:
+        async with self._user_service.lock(user_id, version) as user:
+            async with self._transaction():
+                user.intent = UserIntent.STUDY
+                await self._users.save(user)
+            try:
+                outcome = await self._study_sessions.start_session(user)
+            except NoStudyWordsError:
+                return ReplyOutcome(NO_STUDY_WORDS_TEXT, suggest_add_words=True)
+            match outcome.result:
+                case StartSessionResult.NOT_NOW:
+                    return ReplyOutcome(outcome.text)
+                case StartSessionResult.READY:
+                    already_ready = False
+                case StartSessionResult.ALREADY_READY:
+                    already_ready = True
+                case _ as unexpected:
+                    assert_never(unexpected)
 
-        try:
-            question = await self._study_sessions.get_next_question(user)
-        except LLMUnavailableError:
-            return ReplyOutcome(MODEL_UNAVAILABLE_TEXT)
-        await self._user_service.refresh_next_run(user.telegram_user_id)
-        if question is None:
-            return ReplyOutcome(NO_WORDS_TEXT)
-        if already_ready:
-            question = AskTranslation(
-                word=question.word,
-                text=f"{ALREADY_IN_PROGRESS_TEXT}\n{question.text}",
-            )
-            return ReplyOutcome("", question)
-        return ReplyOutcome(outcome.text or START_STUDY_TEXT, question)
+            try:
+                question = await self._study_sessions.get_next_question(user)
+            except LLMUnavailableError:
+                return ReplyOutcome(MODEL_UNAVAILABLE_TEXT)
+            await self._user_service.refresh_next_run(user.telegram_user_id)
+            if question is None:
+                return ReplyOutcome(NO_WORDS_TEXT)
+            async with self._transaction():
+                user.intent = UserIntent.ANSWER
+                await self._users.save(user)
+                if not await self._users.bump_version(user_id, version):
+                    raise UserVersionError
+            if already_ready:
+                question = AskTranslation(
+                    word=question.word,
+                    text=f"{ALREADY_IN_PROGRESS_TEXT}\n{question.text}",
+                )
+                return ReplyOutcome("", question)
+            return ReplyOutcome(outcome.text or START_STUDY_TEXT, question)
 
     async def handle_skip(
         self,
         user_id: int,
-        version: int | None,
+        version: int,
     ) -> ReplyOutcome:
-        async with self._transaction():
-            user = (
-                await self._users.lock_for_version(user_id, version)
-                if version is not None
-                else await self._users.lock_user(user_id)
-            )
-            if user is None:
-                raise UserVersionError
-
+        async with self._user_service.lock(user_id, version) as user:
             pending = await self._pending_question(user)
             if pending is None:
                 raise PendingQuestionNotFoundError
-
-        outcome = await self._study_sessions.skip_pending(user, pending)
-        if version is not None:
+            outcome = await self._study_sessions.skip_pending(user, pending)
             async with self._transaction():
+                if outcome.question is not None:
+                    user.intent = UserIntent.ANSWER
+                    await self._users.save(user)
+                elif outcome.session_ended:
+                    user.intent = UserIntent.UNKNOWN
+                    await self._users.save(user)
                 if not await self._users.bump_version(user_id, version):
                     raise UserVersionError
-        return outcome
+            return outcome
 
     async def _pending_question(self, user: User) -> PendingQuestion | None:
         async with self._transaction():

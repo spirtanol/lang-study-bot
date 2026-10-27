@@ -78,6 +78,10 @@ class User(TimestampMixin, BaseModel):
         default=1,
         server_default="1",
     )
+    locked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     def local_now(self) -> datetime:
         zone = ZoneInfo(self.timezone or "UTC")

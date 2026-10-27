@@ -3,7 +3,7 @@ from contextlib import AbstractAsyncContextManager
 from datetime import time
 
 from app.models import StudyScheduleSlot
-from app.repositories import StudyScheduleSlotRepository, UserRepository
+from app.repositories import StudyScheduleSlotRepository
 
 from .exceptions import ScheduleSlotNotFoundError, ScheduleSlotTooCloseError
 from .user import UserService
@@ -15,13 +15,11 @@ class StudyScheduleService:
     def __init__(
         self,
         repository: StudyScheduleSlotRepository,
-        users: UserRepository,
         user_service: UserService,
         transaction: Callable[[], AbstractAsyncContextManager[None]],
         slot_gap_minutes: int,
     ):
         self._repository = repository
-        self._users = users
         self._user_service = user_service
         self._transaction = transaction
         self._slot_gap_minutes = slot_gap_minutes
@@ -33,7 +31,6 @@ class StudyScheduleService:
     ) -> StudyScheduleSlot:
         start_time, end_time = _window(local_time, self._slot_gap_minutes)
         async with self._transaction():
-            await self._users.lock_user(user_id)
             if await self._repository.exists_between(
                 user_id,
                 start_time,
@@ -55,7 +52,6 @@ class StudyScheduleService:
 
     async def delete_slot(self, user_id: int, slot_id: int) -> None:
         async with self._transaction():
-            await self._users.lock_user(user_id)
             deleted = await self._repository.delete(user_id, slot_id)
             if not deleted:
                 raise ScheduleSlotNotFoundError
@@ -63,7 +59,6 @@ class StudyScheduleService:
 
     async def clear(self, user_id: int) -> None:
         async with self._transaction():
-            await self._users.lock_user(user_id)
             await self._repository.delete_for_user(user_id)
             await self._user_service.refresh_next_run(user_id)
 
@@ -73,7 +68,6 @@ class StudyScheduleService:
         local_time: time,
     ) -> Sequence[StudyScheduleSlot]:
         async with self._transaction():
-            await self._users.lock_user(user_id)
             await self._repository.delete_for_user(user_id)
             slot = await self._repository.add(
                 StudyScheduleSlot(

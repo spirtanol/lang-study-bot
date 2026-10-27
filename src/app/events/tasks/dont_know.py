@@ -4,7 +4,11 @@ from taskiq import AsyncTaskiqDecoratedTask, Context, TaskiqDepends
 
 from app.events.broker import get_brokers
 from app.events.tasks.telegram import emit_telegram
-from app.services.exceptions import UserVersionError, PendingQuestionNotFoundError
+from app.services.exceptions import (
+    PendingQuestionNotFoundError,
+    UserBusyError,
+    UserVersionError,
+)
 from app.telegram import TelegramCommand
 
 
@@ -32,6 +36,9 @@ async def _handle(
 _task: AsyncTaskiqDecoratedTask = get_brokers().common_broker.register_task(
     _handle,
     task_name="dont_know",
+    retry_on_error=True,
+    max_retries=8,
+    types_of_exceptions=(UserBusyError,),
 )
 
 

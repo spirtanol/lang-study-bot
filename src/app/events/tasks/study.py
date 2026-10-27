@@ -4,6 +4,7 @@ from taskiq import AsyncTaskiqDecoratedTask, Context, TaskiqDepends
 
 from app.events.broker import get_brokers
 from app.events.tasks.telegram import emit_telegram
+from app.services.exceptions import UserBusyError, UserVersionError
 from app.telegram import TelegramCommand
 
 
@@ -13,11 +14,14 @@ async def _handle(
     context: Context = TaskiqDepends(),
 ) -> None:
     container = context.state.container
-    message = await container.user_reply_service.handle_command(
-        user_id,
-        TelegramCommand.STUDY,
-        version,
-    )
+    try:
+        message = await container.user_reply_service.handle_command(
+            user_id,
+            TelegramCommand.STUDY,
+            version,
+        )
+    except UserVersionError:
+        return
     if message is None:
         return
     await container.event_service.publish(
@@ -28,6 +32,9 @@ async def _handle(
 _task: AsyncTaskiqDecoratedTask = get_brokers().common_broker.register_task(
     _handle,
     task_name="study",
+    retry_on_error=True,
+    max_retries=8,
+    types_of_exceptions=(UserBusyError,),
 )
 
 

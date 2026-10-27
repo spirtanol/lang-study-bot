@@ -1,7 +1,7 @@
 from collections.abc import Callable, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.db import AsyncSession
@@ -40,24 +40,24 @@ class UserRepository:
         session = self._get_session()
         return await session.get(User, user_id)
 
-    async def lock_user(self, user_id: int) -> User | None:
-        statement = (
-            select(User)
-            .where(User.telegram_user_id == user_id)
-            .with_for_update()
-        )
-        return await self._get_session().scalar(statement)
-
-    async def lock_for_version(self, user_id: int, version: int) -> User | None:
-        statement = (
-            select(User)
+    async def set_next_run_at(
+        self,
+        user_id: int,
+        version: int,
+        next_run_at: datetime | None,
+    ) -> bool:
+        result = await self._get_session().execute(
+            update(User)
             .where(
                 User.telegram_user_id == user_id,
                 User.version == version,
             )
-            .with_for_update()
+            .values(
+                next_run_at=next_run_at,
+                updated_at=func.now(),
+            )
         )
-        return await self._get_session().scalar(statement)
+        return result.rowcount > 0
 
     async def bump_version(self, user_id: int, version: int) -> bool:
         result = await self._get_session().execute(
@@ -72,6 +72,37 @@ class UserRepository:
             )
         )
         return result.rowcount > 0
+
+    async def acquire_lock(
+        self,
+        user_id: int,
+        version: int,
+        lease: timedelta,
+    ) -> User | None:
+        statement = (
+            update(User)
+            .where(
+                User.telegram_user_id == user_id,
+                User.version == version,
+                or_(
+                    User.locked_at.is_(None),
+                    User.locked_at < func.now() - literal(lease),
+                ),
+            )
+            .values(locked_at=func.now())
+            .returning(User)
+        )
+        return await self._get_session().scalar(statement)
+
+    async def release_lock(self, user_id: int, locked_at: datetime) -> None:
+        await self._get_session().execute(
+            update(User)
+            .where(
+                User.telegram_user_id == user_id,
+                User.locked_at == locked_at,
+            )
+            .values(locked_at=None)
+        )
 
     async def lock_due(self, now: datetime) -> Sequence[User]:
         statement = (

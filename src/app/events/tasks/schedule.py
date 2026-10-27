@@ -7,7 +7,7 @@ from app.defs import SCHEDULE_START_WINDOW, StudyAttemptStatus, StudySessionStat
 from app.events.broker import get_brokers
 from app.events.tasks.telegram import emit_telegram
 from app.models import StudyScheduleSlot
-from app.services.exceptions import NoStudyWordsError
+from app.services.exceptions import NoStudyWordsError, UserVersionError
 from app.telegram import TelegramMessage
 from app.telegram.reply import ADD_WORDS_MARKUP, STUDY_TIME_MARKUP
 from app.telegram.texts import (
@@ -34,73 +34,80 @@ async def _handle(
     with_study_buttons = False
     with_add_words_button = False
 
-    async with container.transaction():
-        user = await container.user_repository.lock_for_version(
-            user_telegram_id,
-            version,
-        )
-        if user is None:
-            return
+    try:
+        async with container.user_service.lock(user_telegram_id, version):
+            async with container.transaction():
+                user = await container.user_repository.get_by_id(user_telegram_id)
+                if user is None:
+                    return
 
-        session = await container.study_session_repository.get_latest_active(
-            user.telegram_user_id,
-        )
-        if session is None:
-            slots = await container.study_schedule_slot_repository.list_for_user(
-                user.telegram_user_id,
-            )
-            if slots:
-                local_now = user.local_now()
-                previous = _previous_run_at(slots, local_now)
-                if local_now - previous <= SCHEDULE_START_WINDOW:
-                    try:
-                        await container.study_session_service.start_session(user)
-                    except NoStudyWordsError:
-                        message = STUDY_TIME_NO_WORDS_TEXT
-                        with_add_words_button = True
-                    else:
-                        message = STUDY_TIME_TEXT
-                        with_study_buttons = True
-        elif session.status == StudySessionStatus.PENDING:
-            if session.created_at + timeout <= now:
-                session.status = StudySessionStatus.TIMED_OUT
-                message = SESSION_MISSED_TIMEOUT_TEXT
-        elif session.status == StudySessionStatus.IN_PROGRESS:
-            attempt = await container.study_attempt_repository.get_latest(
-                session.id,
-            )
-            if attempt is not None:
-                if attempt.updated_at + timeout <= now:
-                    attempt.status = StudyAttemptStatus.TIMED_OUT
-                    session.status = StudySessionStatus.TIMED_OUT
-                    counts = await container.study_attempt_repository.count_results(
+                session = await container.study_session_repository.get_latest_active(
+                    user.telegram_user_id,
+                )
+                if session is None:
+                    slots = (
+                        await container.study_schedule_slot_repository.list_for_user(
+                            user.telegram_user_id,
+                        )
+                    )
+                    if slots:
+                        local_now = user.local_now()
+                        previous = _previous_run_at(slots, local_now)
+                        if local_now - previous <= SCHEDULE_START_WINDOW:
+                            try:
+                                await container.study_session_service.start_session(
+                                    user,
+                                )
+                            except NoStudyWordsError:
+                                message = STUDY_TIME_NO_WORDS_TEXT
+                                with_add_words_button = True
+                            else:
+                                message = STUDY_TIME_TEXT
+                                with_study_buttons = True
+                elif session.status == StudySessionStatus.PENDING:
+                    if session.created_at + timeout <= now:
+                        session.status = StudySessionStatus.TIMED_OUT
+                        message = SESSION_MISSED_TIMEOUT_TEXT
+                elif session.status == StudySessionStatus.IN_PROGRESS:
+                    attempt = await container.study_attempt_repository.get_latest(
                         session.id,
                     )
-                    reviewed = counts.correct + counts.incorrect
-                    message = (
-                        f"{SESSION_FINISHED_TIMEOUT_TEXT}\n"
-                        f"{REVIEWED_COUNT_LABEL} {reviewed}\n"
-                        f"{CORRECT_COUNT_LABEL} {counts.correct}\n"
-                        f"{INCORRECT_COUNT_LABEL} {counts.incorrect}"
-                    )
-            elif session.updated_at + timeout <= now:
-                session.status = StudySessionStatus.TIMED_OUT
-                message = SESSION_FINISHED_TIMEOUT_TEXT
-        elif session.status == StudySessionStatus.DEFERRED:
-            if session.updated_at + timeout <= now:
-                session.status = StudySessionStatus.DEFERRED_2
-                message = STUDY_TIME_TEXT
-                with_study_buttons = True
-        elif session.status == StudySessionStatus.DEFERRED_2:
-            if session.updated_at + timeout <= now:
-                session.status = StudySessionStatus.TIMED_OUT
-                message = SESSION_MISSED_DUE_TIMEOUT_TEXT
+                    if attempt is not None:
+                        if attempt.updated_at + timeout <= now:
+                            attempt.status = StudyAttemptStatus.TIMED_OUT
+                            session.status = StudySessionStatus.TIMED_OUT
+                            counts = (
+                                await container.study_attempt_repository.count_results(
+                                    session.id,
+                                )
+                            )
+                            reviewed = counts.correct + counts.incorrect
+                            message = (
+                                f"{SESSION_FINISHED_TIMEOUT_TEXT}\n"
+                                f"{REVIEWED_COUNT_LABEL} {reviewed}\n"
+                                f"{CORRECT_COUNT_LABEL} {counts.correct}\n"
+                                f"{INCORRECT_COUNT_LABEL} {counts.incorrect}"
+                            )
+                    elif session.updated_at + timeout <= now:
+                        session.status = StudySessionStatus.TIMED_OUT
+                        message = SESSION_FINISHED_TIMEOUT_TEXT
+                elif session.status == StudySessionStatus.DEFERRED:
+                    if session.updated_at + timeout <= now:
+                        session.status = StudySessionStatus.DEFERRED_2
+                        message = STUDY_TIME_TEXT
+                        with_study_buttons = True
+                elif session.status == StudySessionStatus.DEFERRED_2:
+                    if session.updated_at + timeout <= now:
+                        session.status = StudySessionStatus.TIMED_OUT
+                        message = SESSION_MISSED_DUE_TIMEOUT_TEXT
 
-        await container.user_service.refresh_next_run(user_telegram_id)
-        await container.user_repository.bump_version(
-            user_telegram_id,
-            version,
-        )
+                await container.user_service.refresh_next_run(user_telegram_id)
+                await container.user_repository.bump_version(
+                    user_telegram_id,
+                    version,
+                )
+    except UserVersionError:
+        return
 
     if message is not None:
         if with_add_words_button:

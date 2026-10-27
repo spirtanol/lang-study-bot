@@ -19,6 +19,11 @@ def _broker(queue_name: str) -> AioPikaBroker:
             name=EXCHANGE_NAME,
             type=ExchangeType.DIRECT,
         ),
+        delay_queue=Queue(
+            name=f"{queue_name}.delay",
+            type=QueueType.CLASSIC,
+            durable=True,
+        ),
     ).with_queues(
         Queue(
             name=queue_name,
