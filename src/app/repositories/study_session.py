@@ -68,10 +68,7 @@ class StudySessionRepository:
                 user_id=study_session.user_id,
                 status=study_session.status,
             )
-            .on_conflict_do_nothing(
-                index_elements=[StudySession.user_id],
-                index_where=StudySession.status.in_(ACTIVE_SESSION_STATUSES),
-            )
+            .on_conflict_do_nothing()
             .returning(StudySession)
         )
         saved_session = await self._get_session().scalar(statement)
