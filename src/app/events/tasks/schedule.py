@@ -3,7 +3,12 @@ from datetime import datetime, time, timedelta, timezone
 
 from taskiq import AsyncTaskiqDecoratedTask, Context, TaskiqDepends
 
-from app.defs import SCHEDULE_START_WINDOW, StudyAttemptStatus, StudySessionStatus
+from app.defs import (
+    SCHEDULE_START_WINDOW,
+    StudyAttemptStatus,
+    StudySessionStatus,
+    UserIntent,
+)
 from app.events.broker import get_brokers
 from app.events.tasks.telegram import emit_telegram
 from app.models import StudyScheduleSlot
@@ -91,6 +96,11 @@ async def _handle(
                     elif session.updated_at + timeout <= now:
                         session.status = StudySessionStatus.TIMED_OUT
                         message = SESSION_FINISHED_TIMEOUT_TEXT
+                    if (
+                        session.status == StudySessionStatus.TIMED_OUT
+                        and user.intent == UserIntent.ANSWER
+                    ):
+                        user.intent = UserIntent.UNKNOWN
                 elif session.status == StudySessionStatus.DEFERRED:
                     if session.updated_at + timeout <= now:
                         session.status = StudySessionStatus.DEFERRED_2
