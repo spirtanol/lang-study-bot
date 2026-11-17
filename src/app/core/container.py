@@ -181,6 +181,7 @@ class Container:
             repository=self.study_session_repository,
             vocabulary_items=self.vocabulary_item_repository,
             study_attempts=self.study_attempt_repository,
+            words=self.word_repository,
             language_model=self.language_model_service,
             answer_check=self.answer_check_graph,
             transaction=self.transaction,

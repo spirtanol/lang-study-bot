@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from sqlalchemy import select
+from sqlalchemy import func, not_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.db import AsyncSession
@@ -23,3 +23,15 @@ class WordRepository:
             .returning(Word)
         )
         return await self._get_session().scalar(statement)
+
+    async def append_translation(self, text: str, translation: str) -> None:
+        addition = func.jsonb_build_array(translation)
+        statement = (
+            update(Word)
+            .where(
+                Word.text == text,
+                not_(Word.translations.contains(addition)),
+            )
+            .values(translations=Word.translations.concat(addition))
+        )
+        await self._get_session().execute(statement)

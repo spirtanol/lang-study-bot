@@ -15,6 +15,7 @@ from app.repositories import (
     StudyAttemptRepository,
     StudySessionRepository,
     VocabularyItemRepository,
+    WordRepository,
 )
 from app.telegram.texts import (
     CHECK_FAILED_TEXT,
@@ -121,6 +122,7 @@ class StudySessionService:
         repository: StudySessionRepository,
         vocabulary_items: VocabularyItemRepository,
         study_attempts: StudyAttemptRepository,
+        words: WordRepository,
         language_model: LanguageModelService,
         answer_check: AnswerCheckGraph,
         transaction: Callable[[], AbstractAsyncContextManager[None]],
@@ -129,6 +131,7 @@ class StudySessionService:
         self._repository = repository
         self._vocabulary_items = vocabulary_items
         self._study_attempts = study_attempts
+        self._words = words
         self._language_model = language_model
         self._answer_check = answer_check
         self._transaction = transaction
@@ -258,6 +261,7 @@ class StudySessionService:
 
         accepted = _matches_translation(answer, pending.translations)
         remarks = ""
+        learned_from_model = False
         if not accepted:
             try:
                 verdict = await self._answer_check.run(
@@ -271,9 +275,14 @@ class StudySessionService:
                 return ReplyOutcome(CHECK_FAILED_TEXT)
             accepted = verdict.accepted
             remarks = verdict.remarks
+            learned_from_model = accepted
+
+        translations = pending.translations
+        if learned_from_model:
+            translations = (*pending.translations, answer)
 
         if accepted:
-            feedback = _correct_feedback(pending.translations)
+            feedback = _correct_feedback(translations)
             explanation = None
             status = StudyAttemptStatus.CORRECT
             points_delta = 1
@@ -297,6 +306,8 @@ class StudySessionService:
                     pending.vocabulary_item_id,
                     points_delta,
                 )
+                if learned_from_model:
+                    await self._words.append_translation(pending.word, answer)
 
         return await self._continue_after_answer(user, pending, feedback)
 
